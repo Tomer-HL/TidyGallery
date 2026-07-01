@@ -122,7 +122,7 @@ final class LibraryScanCoordinator {
         guard !toAnalyse.isEmpty else { return (enriched, 0) }
 
         // 2. Analyse misses with bounded concurrency.
-        try await withThrowingTaskGroup(of: (Int, AnalyzedImage?).self) { group in
+        return try await withThrowingTaskGroup(of: (Int, AnalyzedImage?).self) { group in
             var inFlight = 0
             var iterator = toAnalyse.makeIterator()
 
