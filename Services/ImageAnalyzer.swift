@@ -4,21 +4,23 @@
 //
 //  The heart of Phase 1. An `actor` that, given a downscaled `CGImage`,
 //  produces a `Sendable` analysis: a feature print for clustering plus a
-//  `ShotScore` (sharpness, aesthetics, face quality). All work is on-device.
+//  `ShotScore` (sharpness + face quality).
 //
-//  Design notes
-//  ------------
-//  • It's an `actor` so concurrent callers are serialised safely and no mutable
-//    Vision state is shared. Vision request objects are created per-call and
-//    never escape the actor, so nothing non-`Sendable` crosses a boundary.
-//  • Inputs/outputs are value types (`CGImage` in — created on the library
-//    actor — and `AnalyzedImage` out).
-//  • Written against the modern async Vision API introduced in iOS 18
-//    (`GenerateImageFeaturePrintRequest`, `DetectFaceLandmarksRequest`,
-//    `CalculateImageAestheticsScoresRequest`). See the README's
-//    "Symbols to verify" note — these are new-SDK names; confirm against your
-//    Xcode version, as the older `VNImageRequestHandler` API is also available
-//    as a fallback.
+//  Vision API choice
+//  -----------------
+//  This uses the CLASSIC, long-stable `VNImageRequestHandler` API
+//  (`VNGenerateImageFeaturePrintRequest`, `VNDetectFaceLandmarksRequest`,
+//  `VNFeaturePrintObservation`, `VNFaceLandmarks2D`) rather than the newer
+//  Swift-only Vision types, whose symbol names shift between SDK versions.
+//  These names have been stable since iOS 13 and compile reliably.
+//
+//  The iOS 18+ image-aesthetics score is intentionally NOT wired up yet — its
+//  new-API symbols need on-device verification. `ShotScore.aesthetics` is left
+//  `nil`, which the scorer treats as a neutral value, so ranking is unaffected.
+//  It can be layered in later without touching the rest of the pipeline.
+//
+//  Concurrency: request objects are created and consumed entirely inside the
+//  actor and never escape, so nothing non-`Sendable` crosses a boundary.
 //
 
 import Foundation
@@ -42,123 +44,104 @@ actor ImageAnalyzer {
     /// snapshot so the resulting score can be persisted whole.
     ///
     /// The feature print is required (clustering depends on it); if Vision can't
-    /// produce one we throw. Aesthetics and face analysis are best-effort — a
-    /// failure there degrades to a neutral sub-score rather than failing the
-    /// whole image.
-    func analyze(image: CGImage, isFavorite: Bool) async throws -> AnalyzedImage {
+    /// produce one we throw. Face analysis is best-effort — a failure there
+    /// degrades to "no faces" rather than failing the whole image.
+    func analyze(image: CGImage, isFavorite: Bool) throws -> AnalyzedImage {
+        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
 
-        // Run the three Vision requests concurrently; they're independent.
-        async let featurePrint = generateFeaturePrint(for: image)
-        async let aesthetics = computeAesthetics(for: image)
-        async let face = evaluateFaces(in: image)
+        let featurePrintRequest = VNGenerateImageFeaturePrintRequest()
+        let faceRequest = VNDetectFaceLandmarksRequest()
 
-        guard let print = try await featurePrint else {
+        // Both requests run in a single handler pass over the image.
+        try handler.perform([featurePrintRequest, faceRequest])
+
+        guard
+            let observation = featurePrintRequest.results?.first as? VNFeaturePrintObservation,
+            let print = Self.extractVector(from: observation)
+        else {
             throw AnalyzerError.featurePrintUnavailable
         }
 
-        // Sharpness is CPU-bound (Accelerate); fine to compute inline.
         let sharpness = BlurDetector.sharpness(of: image)
+        let faces = faceRequest.results as? [VNFaceObservation] ?? []
+        let faceQuality = Self.evaluateFaces(faces)
 
         let score = ShotScore(
             sharpness: sharpness,
-            aesthetics: await aesthetics,
-            faceQuality: await face,
+            aesthetics: nil,            // deferred; scorer treats nil as neutral
+            faceQuality: faceQuality,
             isFavorite: isFavorite
         )
         return AnalyzedImage(featurePrint: print, score: score)
     }
 
-    // MARK: - Feature print (clustering embedding)
+    // MARK: - Feature print → Sendable vector
 
-    private func generateFeaturePrint(for image: CGImage) async throws -> FeaturePrint? {
-        var request = GenerateImageFeaturePrintRequest()
-        request.imageCropAndScaleOption = .scaleFit
-
-        // `perform(on:)` returns a `FeaturePrintObservation`. We copy its raw
-        // Float32 elements into our `Sendable` value type immediately.
-        let observation = try await request.perform(on: image)
-        return Self.extractVector(from: observation)
-    }
-
-    /// Copies the observation's element data into a `[Float]`. The observation
-    /// stores its vector as `Data` of `elementType` floats with `elementCount`.
-    private static func extractVector(from observation: FeaturePrintObservation) -> FeaturePrint? {
+    /// Copies a feature-print observation's raw elements into a `[Float]`.
+    /// Feature prints are Float32 in practice, but we handle the double case
+    /// defensively so a future SDK change can't silently produce garbage.
+    private static func extractVector(from observation: VNFeaturePrintObservation) -> FeaturePrint? {
         let count = observation.elementCount
         guard count > 0 else { return nil }
         let data = observation.data
-        // FeaturePrint elements are Float32 in the current Vision implementation.
-        let floats: [Float] = data.withUnsafeBytes { raw in
-            Array(raw.bindMemory(to: Float.self).prefix(count))
+
+        let floats: [Float]
+        switch observation.elementType {
+        case .float:
+            floats = data.withUnsafeBytes { raw in
+                Array(raw.bindMemory(to: Float.self).prefix(count))
+            }
+        case .double:
+            let doubles = data.withUnsafeBytes { raw in
+                Array(raw.bindMemory(to: Double.self).prefix(count))
+            }
+            floats = doubles.map(Float.init)
+        @unknown default:
+            return nil
         }
+
         guard floats.count == count else { return nil }
         return FeaturePrint(vector: floats)
     }
 
-    // MARK: - Aesthetics (iOS 18 built-in quality signal)
-
-    private func computeAesthetics(for image: CGImage) async -> Double? {
-        do {
-            let request = CalculateImageAestheticsScoresRequest()
-            let observation = try await request.perform(on: image)
-            // `overallScore` is roughly [-1, 1]; normalise to [0, 1].
-            return (Double(observation.overallScore) + 1.0) / 2.0
-        } catch {
-            return nil   // best-effort: neutral if unavailable
-        }
-    }
-
     // MARK: - Face landmarks → eyes-open / smiling
 
-    private func evaluateFaces(in image: CGImage) async -> FaceQuality {
-        do {
-            let request = DetectFaceLandmarksRequest()
-            let faces = try await request.perform(on: image)
-            guard !faces.isEmpty else { return .noFaces }
+    private static func evaluateFaces(_ faces: [VNFaceObservation]) -> FaceQuality {
+        guard !faces.isEmpty else { return .noFaces }
 
-            var eyeScores: [Double] = []
-            var smileScores: [Double] = []
+        var eyeScores: [Double] = []
+        var smileScores: [Double] = []
 
-            for face in faces {
-                guard let landmarks = face.landmarks else { continue }
+        for face in faces {
+            guard let landmarks = face.landmarks else { continue }
 
-                // Eyes: average EAR of both eyes if present.
-                var earValues: [Double] = []
-                if let left = landmarks.leftEye,
-                   let ear = FaceLandmarkEvaluator.eyeAspectRatio(Self.points(left)) {
-                    earValues.append(ear)
-                }
-                if let right = landmarks.rightEye,
-                   let ear = FaceLandmarkEvaluator.eyeAspectRatio(Self.points(right)) {
-                    earValues.append(ear)
-                }
-                if !earValues.isEmpty {
-                    let avgEAR = earValues.reduce(0, +) / Double(earValues.count)
-                    eyeScores.append(FaceLandmarkEvaluator.opennessScore(fromEAR: avgEAR))
-                }
-
-                // Smile: from the outer-lip contour.
-                if let lips = landmarks.outerLips,
-                   let smile = FaceLandmarkEvaluator.smileScore(outerLips: Self.points(lips)) {
-                    smileScores.append(smile)
-                }
+            // Eyes: average EAR of whichever eyes are present.
+            var earValues: [Double] = []
+            if let left = landmarks.leftEye,
+               let ear = FaceLandmarkEvaluator.eyeAspectRatio(left.normalizedPoints) {
+                earValues.append(ear)
+            }
+            if let right = landmarks.rightEye,
+               let ear = FaceLandmarkEvaluator.eyeAspectRatio(right.normalizedPoints) {
+                earValues.append(ear)
+            }
+            if !earValues.isEmpty {
+                let avgEAR = earValues.reduce(0, +) / Double(earValues.count)
+                eyeScores.append(FaceLandmarkEvaluator.opennessScore(fromEAR: avgEAR))
             }
 
-            // Aggregate per FaceQuality's documented policy: worst eyes, best smile.
-            let eyesOpen = eyeScores.min()
-            let smile = smileScores.max()
-            return FaceQuality(
-                faceCount: faces.count,
-                eyesOpenScore: eyesOpen,
-                smileScore: smile
-            )
-        } catch {
-            return .noFaces   // best-effort
+            // Smile: from the outer-lip contour.
+            if let lips = landmarks.outerLips,
+               let smile = FaceLandmarkEvaluator.smileScore(outerLips: lips.normalizedPoints) {
+                smileScores.append(smile)
+            }
         }
-    }
 
-    /// Extracts normalised points from a Vision landmark region. `normalizedPoints`
-    /// are in the face's 0...1 space, which is all our geometry helpers need.
-    private static func points(_ region: FaceLandmarks2D.Region) -> [CGPoint] {
-        region.normalizedPoints
+        // Aggregate: worst eyes (one blinker drags it down), best smile.
+        return FaceQuality(
+            faceCount: faces.count,
+            eyesOpenScore: eyeScores.min(),
+            smileScore: smileScores.max()
+        )
     }
 }

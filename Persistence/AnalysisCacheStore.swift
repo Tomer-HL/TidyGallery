@@ -28,7 +28,7 @@ actor AnalysisCacheStore {
         for assets: [(id: String, modificationDate: Date?)]
     ) throws -> [String: (FeaturePrint, ShotScore)] {
 
-        let ids = Set(assets.map(\.id))
+        let ids = assets.map(\.id)
         let descriptor = FetchDescriptor<CachedAnalysis>(
             predicate: #Predicate { ids.contains($0.localIdentifier) }
         )
@@ -76,9 +76,8 @@ actor AnalysisCacheStore {
     /// Called when the change observer reports deletions, to keep the cache
     /// from growing unbounded.
     func purge(ids: [String]) throws {
-        let idSet = Set(ids)
         let descriptor = FetchDescriptor<CachedAnalysis>(
-            predicate: #Predicate { idSet.contains($0.localIdentifier) }
+            predicate: #Predicate { ids.contains($0.localIdentifier) }
         )
         for row in try modelContext.fetch(descriptor) {
             modelContext.delete(row)
