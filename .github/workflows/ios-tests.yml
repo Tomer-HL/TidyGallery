@@ -1,0 +1,52 @@
+name: iOS Tests
+
+# Runs the pure-logic test suite on a free GitHub-hosted macOS runner.
+# Public repos get unlimited macOS minutes; no Apple Developer account is
+# required because simulator unit tests run unsigned.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:   # lets you trigger a run manually from the Actions tab
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Show available simulators (diagnostic)
+        run: xcrun simctl list devices available | grep -i iphone || true
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project TidyGallery.xcodeproj \
+            -scheme TidyGallery \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: always()   # keep the bundle even when tests fail, for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore

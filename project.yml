@@ -1,0 +1,66 @@
+# XcodeGen spec — generates TidyGallery.xcodeproj from source, so no Mac is
+# needed to "set up" the project by hand. On a Mac or in CI:
+#   brew install xcodegen && xcodegen generate
+# then open TidyGallery.xcodeproj (or let CI run the tests headlessly).
+
+name: TidyGallery
+
+options:
+  bundleIdPrefix: com.tidygallery
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+# Applied to every target. Swift 6 language mode turns on complete strict
+# concurrency checking — the whole codebase is written to pass it.
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGNING_ALLOWED: NO   # tests run unsigned on the simulator (free, no account)
+
+targets:
+
+  TidyGallery:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Models
+      - Persistence
+      - Services
+      - Utilities
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tidygallery.app
+        TARGETED_DEVICE_FAMILY: "1"   # iPhone
+        # Photo-library permission string, injected into the generated Info.plist.
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "TidyGallery analyses your photos entirely on-device to suggest duplicates you can clean up. Nothing is ever deleted without your confirmation."
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+  TidyGalleryTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/TidyGalleryTests
+    dependencies:
+      - target: TidyGallery
+    settings:
+      base:
+        # Needed so @testable import can reach the app module's internals.
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TidyGallery.app/TidyGallery"
+
+# An explicit shared scheme so `xcodebuild -scheme TidyGallery test` works in CI.
+schemes:
+  TidyGallery:
+    build:
+      targets:
+        TidyGallery: all
+    test:
+      targets:
+        - TidyGalleryTests
+      gatherCoverageData: true
