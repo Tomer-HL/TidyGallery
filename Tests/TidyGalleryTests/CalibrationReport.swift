@@ -63,27 +63,41 @@ struct CalibrationReport {
         var names: [PhotoAsset.ID: String] = [:]
         var lapVar: [PhotoAsset.ID: Double] = [:]
 
+        var failures: [String] = []
         for url in urls {
             let name = url.lastPathComponent
-            guard let cgImage = Self.loadImage(url) else {
-                print("  ⚠️ could not decode \(name)")
+            // Downsample to ~512px — matches what the app feeds Vision, and
+            // avoids decoding 40MB+ full-res frames on the simulator.
+            guard let cgImage = Self.loadImage(url, maxPixel: 512) else {
+                failures.append("\(name) (decode failed)")
                 continue
             }
-            let analyzed = try await analyzer.analyze(image: cgImage, isFavorite: false)
-            let asset = PhotoAsset(
-                id: name,                       // use filename as id for readable output
-                creationDate: sharedDate,
-                modificationDate: sharedDate,
-                pixelWidth: cgImage.width,
-                pixelHeight: cgImage.height,
-                isFavorite: false,
-                coordinate: nil,
-                featurePrint: analyzed.featurePrint,
-                score: analyzed.score
-            )
-            assets.append(asset)
-            names[asset.id] = name
-            lapVar[asset.id] = BlurDetector.laplacianVariance(of: cgImage) ?? 0
+            do {
+                let analyzed = try await analyzer.analyze(image: cgImage, isFavorite: false)
+                let asset = PhotoAsset(
+                    id: name,                   // filename as id for readable output
+                    creationDate: sharedDate,
+                    modificationDate: sharedDate,
+                    pixelWidth: cgImage.width,
+                    pixelHeight: cgImage.height,
+                    isFavorite: false,
+                    coordinate: nil,
+                    featurePrint: analyzed.featurePrint,
+                    score: analyzed.score
+                )
+                assets.append(asset)
+                names[asset.id] = name
+                lapVar[asset.id] = BlurDetector.laplacianVariance(of: cgImage) ?? 0
+            } catch {
+                failures.append("\(name) (\(error))")
+            }
+        }
+        if !failures.isEmpty {
+            print("⚠️ skipped \(failures.count) image(s): \(failures.joined(separator: ", "))")
+        }
+        guard !assets.isEmpty else {
+            print("\n=== TIDYGALLERY CALIBRATION REPORT ===\nAll images failed to analyse.\n=== END REPORT ===\n")
+            return
         }
 
         printReport(assets: assets, lapVar: lapVar)
@@ -213,16 +227,25 @@ struct CalibrationReport {
 
     private static func sampleImageURLs() -> [URL] {
         let bundle = Bundle(for: BundleToken.self)
-        let exts = ["jpg", "jpeg", "png", "heic", "heif"]
-        var urls: [URL] = []
-        for ext in exts {
-            urls += bundle.urls(forResourcesWithExtension: ext, subdirectory: nil) ?? []
-        }
-        return urls.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let exts: Set<String> = ["jpg", "jpeg", "png", "heic", "heif"]
+        // Enumerate ALL bundled resources and match extension case-INsensitively
+        // so iPhone's uppercase ".JPG" files are found too.
+        let all = bundle.urls(forResourcesWithExtension: nil, subdirectory: nil) ?? []
+        return all
+            .filter { exts.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    private static func loadImage(_ url: URL) -> CGImage? {
+    /// Loads a downsampled `CGImage` (thumbnail) at ~maxPixel on the long edge —
+    /// matches the resolution the app feeds Vision and avoids huge decodes.
+    private static func loadImage(_ url: URL, maxPixel: Int = 512) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 }
