@@ -129,66 +129,71 @@ private func makeReport(assets: [PhotoAsset], lapVar: [String: Double], config: 
 }
 
 // MARK: - Entry point
+//
+// This file is named main.swift, so its TOP-LEVEL code is the program entry
+// point. A file named main.swift cannot also use the @main attribute, so we run
+// the work via a top-level `await` on an async function.
 
-@main
-struct CalibrationTool {
-    static func main() async {
-        let dir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "Tests/CalibrationImages"
-        let config = AnalysisConfiguration.default
-        let fm = FileManager.default
+private func runCalibration(directory dir: String) async {
+    let config = AnalysisConfiguration.default
+    let fm = FileManager.default
 
-        guard let entries = try? fm.contentsOfDirectory(atPath: dir) else {
-            print("Could not read directory: \(dir)")
-            return
-        }
-        let exts: Set<String> = ["jpg", "jpeg", "png", "heic", "heif"]
-        let files = entries
-            .filter { exts.contains(($0 as NSString).pathExtension.lowercased()) }
-            .sorted()
-        guard !files.isEmpty else {
-            print("No images found in \(dir) (looked for jpg/jpeg/png/heic/heif).")
-            return
-        }
-
-        let analyzer = ImageAnalyzer()
-        let sharedDate = Date(timeIntervalSince1970: 0)
-        var assets: [PhotoAsset] = []
-        var lapVar: [String: Double] = [:]
-        var failures: [String] = []
-
-        for name in files {
-            let path = (dir as NSString).appendingPathComponent(name)
-            guard let cg = loadImage(path: path, maxPixel: 512) else {
-                failures.append("\(name) (decode failed)")
-                continue
-            }
-            do {
-                let analyzed = try await analyzer.analyze(image: cg, isFavorite: false)
-                assets.append(PhotoAsset(
-                    id: name,
-                    creationDate: sharedDate,
-                    modificationDate: sharedDate,
-                    pixelWidth: cg.width,
-                    pixelHeight: cg.height,
-                    isFavorite: false,
-                    coordinate: nil,
-                    featurePrint: analyzed.featurePrint,
-                    score: analyzed.score
-                ))
-                lapVar[name] = BlurDetector.laplacianVariance(of: cg) ?? 0
-            } catch {
-                failures.append("\(name) (\(error))")
-            }
-        }
-
-        if !failures.isEmpty {
-            print("⚠️ skipped \(failures.count) image(s): \(failures.joined(separator: ", "))")
-        }
-        guard !assets.isEmpty else {
-            print("All images failed to analyse.")
-            return
-        }
-
-        print(makeReport(assets: assets, lapVar: lapVar, config: config))
+    guard let entries = try? fm.contentsOfDirectory(atPath: dir) else {
+        print("Could not read directory: \(dir)")
+        return
     }
+    let exts: Set<String> = ["jpg", "jpeg", "png", "heic", "heif"]
+    let files = entries
+        .filter { exts.contains(($0 as NSString).pathExtension.lowercased()) }
+        .sorted()
+    guard !files.isEmpty else {
+        print("No images found in \(dir) (looked for jpg/jpeg/png/heic/heif).")
+        return
+    }
+
+    let analyzer = ImageAnalyzer()
+    let sharedDate = Date(timeIntervalSince1970: 0)
+    var assets: [PhotoAsset] = []
+    var lapVar: [String: Double] = [:]
+    var failures: [String] = []
+
+    for name in files {
+        let path = (dir as NSString).appendingPathComponent(name)
+        guard let cg = loadImage(path: path, maxPixel: 512) else {
+            failures.append("\(name) (decode failed)")
+            continue
+        }
+        do {
+            let analyzed = try await analyzer.analyze(image: cg, isFavorite: false)
+            assets.append(PhotoAsset(
+                id: name,
+                creationDate: sharedDate,
+                modificationDate: sharedDate,
+                pixelWidth: cg.width,
+                pixelHeight: cg.height,
+                isFavorite: false,
+                coordinate: nil,
+                featurePrint: analyzed.featurePrint,
+                score: analyzed.score
+            ))
+            lapVar[name] = BlurDetector.laplacianVariance(of: cg) ?? 0
+        } catch {
+            failures.append("\(name) (\(error))")
+        }
+    }
+
+    if !failures.isEmpty {
+        print("⚠️ skipped \(failures.count) image(s): \(failures.joined(separator: ", "))")
+    }
+    guard !assets.isEmpty else {
+        print("All images failed to analyse.")
+        return
+    }
+
+    print(makeReport(assets: assets, lapVar: lapVar, config: config))
 }
+
+let calibrationDirectory = CommandLine.arguments.count > 1
+    ? CommandLine.arguments[1]
+    : "Tests/CalibrationImages"
+await runCalibration(directory: calibrationDirectory)
