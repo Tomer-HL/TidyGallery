@@ -106,6 +106,26 @@ helper runs on Windows) using a free Apple ID — which must be re-signed every 
 days. It's fiddly; TestFlight is the smooth path but needs the $99/yr program.
 Not required to keep developing.
 
+## Calibrating the thresholds
+
+The default constants in `AnalysisConfiguration` (`0.55`/`0.35` similarity, the
+blur half-saturation) are starting guesses. The `CalibrationReport` test tunes
+them against real photos, and runs in the same free CI:
+
+1. Add ~10–20 sample photos to `Tests/CalibrationImages/`, named with a group
+   prefix (`beach_1.heic`, `beach_2.heic`, `dog_1.jpg`, `sunset.jpg`). See that
+   folder's README for what makes a good set — and the **privacy note**, since a
+   public repo makes committed images public.
+2. Push. Open the CI run → **Run tests** step → search the log for
+   `CALIBRATION REPORT`.
+3. The report prints per-image scores, every pairwise feature-print distance
+   (tagged same-group vs different-group), the stacks formed at current
+   thresholds, and a suggested `featurePrintSimilarityThreshold` at the midpoint
+   of the gap between same- and different-group distances.
+4. Edit the constants in `Models/AnalysisConfiguration.swift`, push, repeat.
+
+The harness never fails the build; with no images it just prints a notice.
+
 ## Not yet built (Phase 2)
 
 SwiftUI stacks gallery, star badge on the best shot, toggle/override selection, and the confirmation flow that calls the already-present `PhotoLibraryService.deleteAssets(withIdentifiers:)`.

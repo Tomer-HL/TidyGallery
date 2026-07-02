@@ -46,6 +46,11 @@ targets:
     platform: iOS
     sources:
       - Tests/TidyGalleryTests
+      # Sample photos for the calibration harness. `optional` so the build
+      # still works when the folder is empty; images are bundled as resources.
+      - path: Tests/CalibrationImages
+        buildPhase: resources
+        optional: true
     dependencies:
       - target: TidyGallery
     settings:
