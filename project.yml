@@ -32,6 +32,8 @@ targets:
       - Persistence
       - Services
       - Utilities
+      - ViewModels
+      - Views
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tidygallery.app

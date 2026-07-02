@@ -2,8 +2,9 @@
 //  TidyGalleryApp.swift
 //  TidyGallery
 //
-//  Composition root. Builds the SwiftData container and wires the services that
-//  the (Phase 2) UI will consume. Kept deliberately thin — no business logic.
+//  Composition root. Builds the SwiftData container, wires the services, and
+//  injects the photo library into the environment so any view can load
+//  thumbnails. Kept deliberately thin — no business logic.
 //
 //  Info.plist requirement:
 //    NSPhotoLibraryUsageDescription  — required to request photo access.
@@ -19,6 +20,9 @@ struct TidyGalleryApp: App {
     /// Shared SwiftData container holding the analysis cache.
     let modelContainer: ModelContainer
 
+    /// Photo library service — shared by the scan pipeline and the UI thumbnails.
+    let library: PhotoLibraryService
+
     /// The scan coordinator the UI observes. Constructed once at launch.
     @State private var coordinator: LibraryScanCoordinator
 
@@ -28,17 +32,17 @@ struct TidyGalleryApp: App {
         do {
             container = try ModelContainer(for: CachedAnalysis.self)
         } catch {
-            // A cache we can't open is not fatal to the concept, but it is fatal
-            // to performance guarantees — fail loudly in development.
             fatalError("Failed to create ModelContainer: \(error)")
         }
         self.modelContainer = container
 
-        // 2. Wire services. The cache store is a ModelActor bound to the
-        //    container's configuration.
+        // 2. Wire services. One PhotoLibraryService is shared everywhere.
+        let library = PhotoLibraryService()
+        self.library = library
+
         let cache = AnalysisCacheStore(modelContainer: container)
         let coordinator = LibraryScanCoordinator(
-            library: PhotoLibraryService(),
+            library: library,
             analyzer: ImageAnalyzer(),
             cache: cache
         )
@@ -47,38 +51,9 @@ struct TidyGalleryApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // Phase 2 replaces this with the stacks UI. For now, a minimal
-            // driver so the pipeline is runnable end-to-end.
-            ScanRootView(coordinator: coordinator)
+            ContentView(coordinator: coordinator)
+                .environment(\.photoLibrary, library)
         }
         .modelContainer(modelContainer)
-    }
-}
-
-/// Minimal placeholder screen that runs a scan and reports progress. Phase 2
-/// swaps this for the real stacks gallery.
-private struct ScanRootView: View {
-    let coordinator: LibraryScanCoordinator
-
-    var body: some View {
-        VStack(spacing: 16) {
-            switch coordinator.phase {
-            case .idle:
-                Button("Scan Library") { Task { await coordinator.scan() } }
-            case .requestingAccess:
-                ProgressView("Requesting access…")
-            case let .scanning(analysed, _):
-                ProgressView("Analysed \(analysed) photos…")
-            case .clustering:
-                ProgressView("Grouping similar photos…")
-            case let .finished(count):
-                Text("Found \(count) stacks to review.")
-            case .accessDenied:
-                Text("Photo access is required. Enable it in Settings.")
-            case let .failed(message):
-                Text("Scan failed: \(message)")
-            }
-        }
-        .padding()
     }
 }

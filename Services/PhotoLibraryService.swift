@@ -180,6 +180,40 @@ final class PhotoLibraryService {
         PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject
     }
 
+    // MARK: - UI thumbnails
+
+    /// Loads a display thumbnail for a photo tile. Delivers the high-quality
+    /// image once (the request may fire a degraded preview first, which we
+    /// skip). `aspectFill` so tiles crop nicely to a square/rect.
+    ///
+    /// Unlike analysis, this permits network access so iCloud-only photos still
+    /// render in the UI.
+    func thumbnail(for localIdentifier: String, targetSize: CGSize) async -> UIImage? {
+        guard let asset = Self.fetchAsset(localIdentifier) else { return nil }
+
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isSynchronous = false
+
+        return await withCheckedContinuation { continuation in
+            var didResume = false
+            imageManager.requestImage(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: .aspectFill,
+                options: options
+            ) { image, info in
+                if didResume { return }
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                if isDegraded { return }        // wait for the full-quality pass
+                didResume = true
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
     // MARK: - Deletion (Phase 2 entry point — kept here for cohesion)
 
     /// Deletes assets by identifier. **This is the only method that removes
