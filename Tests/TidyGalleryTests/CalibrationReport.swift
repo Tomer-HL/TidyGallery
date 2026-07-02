@@ -121,6 +121,26 @@ struct CalibrationReport {
         out += "  preselectSim=\(f(Double(config.preselectSimilarityThreshold)))"
         out += "  qualityMargin=\(f(config.preselectQualityMargin))\n"
 
+        // 0. Feature-print sanity — if these vectors are all-zero or identical
+        //    across different photos, the embedding model isn't running (e.g.
+        //    the iOS Simulator doesn't execute VNGenerateImageFeaturePrint).
+        out += "\n--- Feature-print sanity ---\n"
+        if let first = assets.first?.featurePrint {
+            out += "  vector length: \(first.vector.count)\n"
+            let sample = first.vector.prefix(6).map { f(Double($0), 4) }.joined(separator: ", ")
+            out += "  img[0] first values: \(sample)\n"
+        }
+        if assets.count > 1, let v = assets[1].featurePrint {
+            let sample = v.vector.prefix(6).map { f(Double($0), 4) }.joined(separator: ", ")
+            out += "  img[1] first values: \(sample)\n"
+        }
+        if let f0 = assets.first?.featurePrint {
+            let allSame = assets.allSatisfy { ($0.featurePrint?.vector ?? []) == f0.vector }
+            let allZero = f0.vector.allSatisfy { $0 == 0 }
+            out += "  all vectors identical across images? \(allSame)\n"
+            out += "  img[0] vector is all-zero? \(allZero)\n"
+        }
+
         // 1. Per-image scores.
         out += "\n--- Per-image scores (higher = better, except lapVar which is raw) ---\n"
         out += pad("name", 22) + pad("sharp", 9) + pad("lapVar", 10)
