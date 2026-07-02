@@ -28,9 +28,13 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// time bucket are considered visually similar and merged into one stack.
     ///
     /// `FeaturePrintObservation.distance(to:)` returns an L2 distance where
-    /// **smaller means more similar**. This value is intentionally
-    /// conservative; tune against a labelled sample before shipping.
-    var featurePrintSimilarityThreshold: Float = 0.55
+    /// **smaller means more similar**.
+    ///
+    /// Calibrated on a real sample (CalibrationTool): burst/duplicate pairs
+    /// clustered at 0.16–0.30, unrelated photos at 0.77–1.25, with an empty gap
+    /// between. 0.45 sits in that gap with margin on both sides — comfortably
+    /// above the duplicate ceiling, well below the "different scene" floor.
+    var featurePrintSimilarityThreshold: Float = 0.45
 
     /// If both assets carry a location, discard the pair from a burst when they
     /// are farther apart than this (meters). Guards against grouping photos that
@@ -54,6 +58,10 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// A stack-mate is only pre-selected for deletion when it is at least this
     /// similar to the best shot (distance <= this). Prevents deleting a photo
     /// that merely happens to share a stack but is visually distinct.
+    ///
+    /// Calibration validated 0.35: it sits just above the observed duplicate
+    /// ceiling (~0.30), so only genuine near-duplicates are ever auto-selected —
+    /// stricter than the clustering threshold, matching the safety-first rule.
     var preselectSimilarityThreshold: Float = 0.35
 
     /// A stack-mate is only pre-selected when its composite score is at least
