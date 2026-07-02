@@ -48,6 +48,10 @@ targets:
       - Tests/TidyGalleryTests
     dependencies:
       - target: TidyGallery
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TidyGallery.app/TidyGallery"
 
   # macOS command-line tool for threshold calibration. Runs the real Vision
   # feature-print model (which the iOS Simulator can't), reading images straight
@@ -67,11 +71,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tidygallery.calibration
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-    settings:
-      base:
-        # Needed so @testable import can reach the app module's internals.
-        BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TidyGallery.app/TidyGallery"
 
 # An explicit shared scheme so `xcodebuild -scheme TidyGallery test` works in CI.
 schemes:
