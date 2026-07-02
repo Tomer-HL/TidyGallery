@@ -1,23 +1,9 @@
 # Calibration images
 
-Drop a handful of representative photos here, then push. The `CalibrationReport`
-test analyses them and prints a tuning report into the CI "Run tests" log
-(search the log for `CALIBRATION REPORT`).
-
-## Naming
-
-Name files with a **group prefix before the first underscore**. Photos that
-*should* end up in the same stack share a prefix:
-
-```
-beach_1.heic   beach_2.heic   beach_3.heic     ← one burst
-dog_1.jpg      dog_2.jpg                        ← another burst
-sunset.jpg                                      ← a standalone (own group)
-```
-
-The report uses these groups as ground truth: same-group photos should have
-small feature-print distances, different groups large. It then suggests a
-threshold that separates them.
+Drop a handful of representative photos here, then push. The `CalibrationTool`
+macOS target analyses them and prints a tuning report into the CI
+**Run calibration report** step. No special naming needed — any filenames and
+any case of extension (`.JPG`, `.HEIC`, …) work.
 
 ## Good sample set
 

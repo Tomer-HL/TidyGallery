@@ -50,3 +50,23 @@ jobs:
           name: test-results
           path: TestResults.xcresult
           if-no-files-found: ignore
+
+      # Calibration runs NATIVELY on macOS, where VNGenerateImageFeaturePrint
+      # actually executes (the iOS Simulator returns constant embeddings).
+      - name: Build calibration tool (native macOS)
+        if: always()
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project TidyGallery.xcodeproj \
+            -scheme CalibrationTool \
+            -destination 'platform=macOS' \
+            -derivedDataPath calib-dd \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run calibration report
+        if: always()
+        run: |
+          BIN="$(find calib-dd/Build/Products -type f -name CalibrationTool | head -1)"
+          echo "Running: $BIN Tests/CalibrationImages"
+          "$BIN" Tests/CalibrationImages

@@ -109,22 +109,25 @@ Not required to keep developing.
 ## Calibrating the thresholds
 
 The default constants in `AnalysisConfiguration` (`0.55`/`0.35` similarity, the
-blur half-saturation) are starting guesses. The `CalibrationReport` test tunes
-them against real photos, and runs in the same free CI:
+blur half-saturation) are starting guesses. The `CalibrationTool` macOS target
+tunes them against real photos, and runs in the same free CI.
 
-1. Add ~10–20 sample photos to `Tests/CalibrationImages/`, named with a group
-   prefix (`beach_1.heic`, `beach_2.heic`, `dog_1.jpg`, `sunset.jpg`). See that
-   folder's README for what makes a good set — and the **privacy note**, since a
-   public repo makes committed images public.
-2. Push. Open the CI run → **Run tests** step → search the log for
-   `CALIBRATION REPORT`.
-3. The report prints per-image scores, every pairwise feature-print distance
-   (tagged same-group vs different-group), the stacks formed at current
-   thresholds, and a suggested `featurePrintSimilarityThreshold` at the midpoint
-   of the gap between same- and different-group distances.
+**Why a macOS tool and not a test?** `VNGenerateImageFeaturePrintRequest` does
+not execute on the iOS Simulator — it returns near-constant embeddings, so every
+photo looks identical. It works natively on macOS, and the CI runner *is* a Mac,
+so calibration runs there as a command-line tool (`CalibrationTool/main.swift`).
+
+1. Put sample photos in `Tests/CalibrationImages/` (any case, `.JPG`/`.HEIC`/…).
+   See that folder's README for a good sample set — and the **privacy note**,
+   since a public repo makes committed images public.
+2. Push. Open the CI run → **Run calibration report** step (near the end).
+3. It prints per-image scores, the closest feature-print pairs, and a distance
+   distribution (min/percentiles/max). The similarity threshold belongs in the
+   gap between the tight cluster of duplicate distances and the rest.
 4. Edit the constants in `Models/AnalysisConfiguration.swift`, push, repeat.
 
-The harness never fails the build; with no images it just prints a notice.
+The iOS test suite (`TidyGalleryTests`) still runs on the simulator and covers
+all the pure logic; only the Vision-embedding calibration needs the macOS tool.
 
 ## Not yet built (Phase 2)
 
