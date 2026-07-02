@@ -124,27 +124,43 @@ struct CalibrationReport {
                 + f(s.composite(using: config), 3) + "\n"
         }
 
-        // 2. Pairwise feature-print distances with same/different-group tags.
-        out += "\n--- Pairwise feature-print distances (smaller = more similar) ---\n"
+        // 2. Pairwise feature-print distances — closest pairs are what matter
+        //    for choosing a threshold, so we show only the N smallest plus a
+        //    distribution summary (the full list can be thousands of pairs).
         var samePairs: [Double] = []
         var diffPairs: [Double] = []
         var lines: [(Double, String)] = []
+        var allDistances: [Double] = []
 
         for i in 0..<assets.count {
             for j in (i + 1)..<assets.count {
                 guard let a = assets[i].featurePrint, let b = assets[j].featurePrint else { continue }
                 let d = Double(a.distance(to: b))
-                let ga = Self.group(of: assets[i].id), gb = Self.group(of: assets[j].id)
-                let sameGroup = (ga == gb)
+                allDistances.append(d)
+                let sameGroup = Self.group(of: assets[i].id) == Self.group(of: assets[j].id)
                 if sameGroup { samePairs.append(d) } else { diffPairs.append(d) }
                 let verdict = Double(config.featurePrintSimilarityThreshold) >= d ? "SIMILAR" : "different"
-                let tag = sameGroup ? "[same-group]" : "[diff-group]"
-                let line = "  " + pad(assets[i].id, 20) + " <-> " + pad(assets[j].id, 20)
-                    + "  " + f(d, 3) + "  " + tag + "  => " + verdict
+                let line = "  " + pad(assets[i].id, 16) + " <-> " + pad(assets[j].id, 16)
+                    + "  " + f(d, 3) + "  => " + verdict
                 lines.append((d, line))
             }
         }
-        for (_, line) in lines.sorted(by: { $0.0 < $1.0 }) { out += line + "\n" }
+        let sortedLines = lines.sorted { $0.0 < $1.0 }
+        let cap = 45
+        out += "\n--- Closest pairs (smaller = more similar; likely duplicates at the top) ---\n"
+        out += "  (showing \(min(cap, sortedLines.count)) of \(sortedLines.count) total pairs)\n"
+        for (_, line) in sortedLines.prefix(cap) { out += line + "\n" }
+
+        // Distance distribution — lets a threshold be chosen even without group labels.
+        let sd = allDistances.sorted()
+        if !sd.isEmpty {
+            func pct(_ p: Double) -> Double { sd[min(sd.count - 1, Int(p * Double(sd.count)))] }
+            out += "\n--- Distance distribution ---\n"
+            out += "  min=\(f(sd.first!, 3))  p05=\(f(pct(0.05), 3))  p10=\(f(pct(0.10), 3))"
+            out += "  median=\(f(pct(0.50), 3))  max=\(f(sd.last!, 3))\n"
+            out += "  A natural gap between a cluster of small distances and the rest\n"
+            out += "  is where the similarity threshold belongs.\n"
+        }
 
         // 3. Stacks at current thresholds.
         out += "\n--- Stacks at current thresholds ---\n"
