@@ -11,6 +11,7 @@ import SwiftUI
 
 struct StackCardView: View {
     let stack: ReviewModel.Stack
+    let onOpenPreview: (PhotoAsset.ID) -> Void
     let onToggleDeletion: (PhotoAsset.ID) -> Void
     let onMakeBest: (PhotoAsset.ID) -> Void
     let onSelectAllExtras: () -> Void
@@ -71,6 +72,7 @@ struct StackCardView: View {
                         assetID: id,
                         isBestShot: id == stack.bestShotID,
                         isChecked: stack.checkedForDeletion.contains(id),
+                        onOpenPreview: { onOpenPreview(id) },
                         onToggleDeletion: { onToggleDeletion(id) },
                         onMakeBest: { onMakeBest(id) }
                     )

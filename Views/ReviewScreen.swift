@@ -16,6 +16,14 @@ struct ReviewScreen: View {
     @State private var showConfirm = false
     @State private var isDeleting = false
     @State private var banner: String?
+    @State private var preview: PreviewContext?
+
+    /// Identifies which photo (and stack) the full-screen preview should open at.
+    private struct PreviewContext: Identifiable {
+        let id = UUID()
+        let stackID: UUID
+        let startAssetID: PhotoAsset.ID
+    }
 
     init(stacks: [PhotoStack]) {
         _model = State(initialValue: ReviewModel(stacks: stacks))
@@ -46,6 +54,9 @@ struct ReviewScreen: View {
             Text("They'll move to Recently Deleted, where you can recover them for 30 days.")
         }
         .overlay(alignment: .top) { bannerView }
+        .fullScreenCover(item: $preview) { ctx in
+            PhotoPreviewView(model: model, stackID: ctx.stackID, startAssetID: ctx.startAssetID)
+        }
     }
 
     // MARK: List
@@ -56,6 +67,7 @@ struct ReviewScreen: View {
                 ForEach(model.stacks) { stack in
                     StackCardView(
                         stack: stack,
+                        onOpenPreview: { preview = PreviewContext(stackID: stack.id, startAssetID: $0) },
                         onToggleDeletion: { model.toggleDeletion(of: $0, inStack: stack.id) },
                         onMakeBest: { model.setBestShot($0, inStack: stack.id) },
                         onSelectAllExtras: { model.checkAllExtras(inStack: stack.id) },

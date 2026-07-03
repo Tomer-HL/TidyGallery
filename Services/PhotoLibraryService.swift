@@ -182,13 +182,24 @@ final class PhotoLibraryService {
 
     // MARK: - UI thumbnails
 
-    /// Loads a display thumbnail for a photo tile. Delivers the high-quality
-    /// image once (the request may fire a degraded preview first, which we
-    /// skip). `aspectFill` so tiles crop nicely to a square/rect.
+    /// Square-cropped thumbnail for a filmstrip tile.
     ///
-    /// Unlike analysis, this permits network access so iCloud-only photos still
-    /// render in the UI.
+    /// Unlike analysis, UI image requests permit network access so iCloud-only
+    /// photos still render.
     func thumbnail(for localIdentifier: String, targetSize: CGSize) async -> UIImage? {
+        await requestUIImage(localIdentifier, targetSize: targetSize, contentMode: .aspectFill)
+    }
+
+    /// Large, aspect-fit image for the full-screen preview (whole photo visible).
+    func previewImage(for localIdentifier: String, targetSize: CGSize) async -> UIImage? {
+        await requestUIImage(localIdentifier, targetSize: targetSize, contentMode: .aspectFit)
+    }
+
+    private func requestUIImage(
+        _ localIdentifier: String,
+        targetSize: CGSize,
+        contentMode: PHImageContentMode
+    ) async -> UIImage? {
         guard let asset = Self.fetchAsset(localIdentifier) else { return nil }
 
         let options = PHImageRequestOptions()
@@ -202,7 +213,7 @@ final class PhotoLibraryService {
             imageManager.requestImage(
                 for: asset,
                 targetSize: targetSize,
-                contentMode: .aspectFill,
+                contentMode: contentMode,
                 options: options
             ) { image, info in
                 if didResume { return }
