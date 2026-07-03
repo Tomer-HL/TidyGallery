@@ -44,6 +44,14 @@ final class LibraryScanCoordinator {
     /// peak memory and thermals in check on large libraries; raise cautiously.
     private let maxConcurrentAnalyses: Int
 
+    /// The enriched, analysed asset set from the last scan — retained so live
+    /// library changes can be applied as deltas without re-scanning everything.
+    private var analysedAssets: [PhotoAsset] = []
+
+    /// Live library-change observer, started after the first successful scan.
+    private var changeObserver: PhotoLibraryChangeObserver?
+    private var observationTask: Task<Void, Never>?
+
     init(
         library: PhotoLibraryService,
         analyzer: ImageAnalyzer,
@@ -93,8 +101,73 @@ final class LibraryScanCoordinator {
 
         // Cluster + score.
         phase = .clustering
+        analysedAssets = enriched
         let stacks = buildStacks(from: enriched)
         self.stacks = stacks
+        phase = .finished(stackCount: stacks.count)
+
+        startObserving()
+    }
+
+    // MARK: - Incremental updates
+
+    /// Begin observing the photo library. Idempotent — safe to call after every
+    /// scan; only the first call actually registers.
+    private func startObserving() {
+        guard changeObserver == nil else { return }
+        let observer = PhotoLibraryChangeObserver()
+        changeObserver = observer
+        observationTask = Task { [weak self] in
+            for await change in observer.changes {
+                await self?.apply(change)
+            }
+        }
+    }
+
+    /// Apply a library delta: purge removed assets from the cache and working
+    /// set, (re)analyse only the changed/inserted ones, then re-cluster. The
+    /// heavy full-library scan is never repeated.
+    private func apply(_ change: LibraryChange) async {
+        // Removals.
+        if !change.removedIdentifiers.isEmpty {
+            try? await cache.purge(ids: change.removedIdentifiers)
+            let removed = Set(change.removedIdentifiers)
+            analysedAssets.removeAll { removed.contains($0.id) }
+        }
+
+        // Insertions / modifications.
+        if !change.changedIdentifiers.isEmpty {
+            let snapshots = library.snapshots(for: change.changedIdentifiers)
+            let keys = snapshots.map { (id: $0.id, modificationDate: $0.modificationDate) }
+            let cached = (try? await cache.freshAnalysis(for: keys)) ?? [:]
+
+            var updated: [PhotoAsset] = []
+            for var asset in snapshots {
+                if let hit = cached[asset.id] {
+                    asset.featurePrint = hit.0
+                    asset.score = hit.1
+                } else if let cgImage = await library.analysisImage(for: asset.id),
+                          let result = try? await analyzer.analyze(image: cgImage, isFavorite: asset.isFavorite) {
+                    asset.featurePrint = result.featurePrint
+                    asset.score = result.score
+                    try? await cache.store(
+                        id: asset.id,
+                        modificationDate: asset.modificationDate,
+                        featurePrint: result.featurePrint,
+                        score: result.score
+                    )
+                }
+                if asset.isAnalysed { updated.append(asset) }
+            }
+
+            // Replace existing entries and add new ones.
+            let updatedIDs = Set(updated.map(\.id))
+            analysedAssets.removeAll { updatedIDs.contains($0.id) }
+            analysedAssets.append(contentsOf: updated)
+        }
+
+        // Re-cluster from the updated working set.
+        stacks = buildStacks(from: analysedAssets)
         phase = .finished(stackCount: stacks.count)
     }
 

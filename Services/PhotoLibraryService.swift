@@ -127,6 +127,20 @@ final class PhotoLibraryService {
         }
     }
 
+    /// Snapshots specific assets by identifier (still images only) — used to
+    /// re-analyse just the delta when the library changes.
+    func snapshots(for identifiers: [String]) -> [PhotoAsset] {
+        guard !identifiers.isEmpty else { return [] }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+        var result: [PhotoAsset] = []
+        fetched.enumerateObjects { asset, _, _ in
+            if asset.mediaType == .image {
+                result.append(Self.snapshot(asset))
+            }
+        }
+        return result
+    }
+
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`
     /// value type. Called on the main actor while the asset is valid.
     private static func snapshot(_ asset: PHAsset) -> PhotoAsset {
