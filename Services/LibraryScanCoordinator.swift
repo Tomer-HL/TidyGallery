@@ -33,6 +33,9 @@ final class LibraryScanCoordinator {
     private(set) var phase: Phase = .idle
     private(set) var stacks: [PhotoStack] = []
 
+    /// All screenshots in the library (a separate cleanup category).
+    private(set) var screenshots: [PhotoAsset] = []
+
     // MARK: Collaborators
 
     private let library: PhotoLibraryService
@@ -104,6 +107,7 @@ final class LibraryScanCoordinator {
         analysedAssets = enriched
         let stacks = buildStacks(from: enriched)
         self.stacks = stacks
+        screenshots = library.fetchScreenshots()
         phase = .finished(stackCount: stacks.count)
 
         startObserving()
@@ -166,8 +170,9 @@ final class LibraryScanCoordinator {
             analysedAssets.append(contentsOf: updated)
         }
 
-        // Re-cluster from the updated working set.
+        // Re-cluster from the updated working set, and refresh screenshots.
         stacks = buildStacks(from: analysedAssets)
+        screenshots = library.fetchScreenshots()
         phase = .finished(stackCount: stacks.count)
     }
 

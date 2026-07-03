@@ -14,7 +14,11 @@ struct ContentView: View {
     @State var coordinator: LibraryScanCoordinator
 
     var body: some View {
-        NavigationStack {
+        // The finished state is a TabView whose tabs own their own navigation;
+        // the transient scan states are simple centered screens.
+        if case .finished = coordinator.phase {
+            MainTabView(coordinator: coordinator)
+        } else {
             ZStack {
                 Theme.Colors.background.ignoresSafeArea()
                 content
@@ -32,14 +36,14 @@ struct ContentView: View {
             progressState("Analysing your library…", detail: "\(analysed) photos scanned")
         case .clustering:
             progressState("Grouping similar photos…")
-        case .finished:
-            ReviewScreen(stacks: coordinator.stacks)
         case .accessDenied:
             accessDeniedState
         case let .failed(message):
             messageState(icon: "exclamationmark.triangle.fill",
                          title: "Scan failed",
                          detail: message)
+        case .finished:
+            EmptyView()   // handled above by MainTabView
         }
     }
 

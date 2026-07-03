@@ -141,6 +141,28 @@ final class PhotoLibraryService {
         return result
     }
 
+    /// Fetches all screenshots (newest first) from the system "Screenshots"
+    /// smart album, as `Sendable` snapshots.
+    func fetchScreenshots() -> [PhotoAsset] {
+        let albums = PHAssetCollection.fetchAssetCollections(
+            with: .smartAlbum,
+            subtype: .smartAlbumScreenshots,
+            options: nil
+        )
+        guard let album = albums.firstObject else { return [] }
+
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let assets = PHAsset.fetchAssets(in: album, options: options)
+
+        var result: [PhotoAsset] = []
+        result.reserveCapacity(assets.count)
+        assets.enumerateObjects { asset, _, _ in
+            result.append(Self.snapshot(asset))
+        }
+        return result
+    }
+
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`
     /// value type. Called on the main actor while the asset is valid.
     private static func snapshot(_ asset: PHAsset) -> PhotoAsset {
