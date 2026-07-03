@@ -38,6 +38,7 @@ struct ReviewScreen: View {
             }
         }
         .background(Theme.Colors.background.ignoresSafeArea())
+        .task { if let library { await model.loadSizes(using: library) } }
         .navigationTitle("Review")
         .navigationBarTitleDisplayMode(.large)
         .safeAreaInset(edge: .bottom) { deleteBar }
@@ -67,6 +68,7 @@ struct ReviewScreen: View {
                 ForEach(model.stacks) { stack in
                     StackCardView(
                         stack: stack,
+                        reclaimBytes: model.bytesToFree(inStack: stack.id),
                         onOpenPreview: { preview = PreviewContext(stackID: stack.id, startAssetID: $0) },
                         onToggleDeletion: { model.toggleDeletion(of: $0, inStack: stack.id) },
                         onMakeBest: { model.setBestShot($0, inStack: stack.id) },
@@ -93,9 +95,7 @@ struct ReviewScreen: View {
                     } else {
                         Image(systemName: "trash.fill")
                     }
-                    Text(isDeleting
-                         ? "Deleting…"
-                         : "Delete \(model.totalPhotosToDelete) photo\(model.totalPhotosToDelete == 1 ? "" : "s")")
+                    Text(deleteButtonTitle)
                         .monospacedDigit()
                 }
                 .font(.headline)
@@ -135,6 +135,18 @@ struct ReviewScreen: View {
                 .padding(.top, Theme.Spacing.s)
                 .transition(.move(edge: .top).combined(with: .opacity))
         }
+    }
+
+    // MARK: Delete button label
+
+    private var deleteButtonTitle: String {
+        if isDeleting { return "Deleting…" }
+        let n = model.totalPhotosToDelete
+        var title = "Delete \(n) photo\(n == 1 ? "" : "s")"
+        if model.totalBytesToFree > 0 {
+            title += " · frees ~\(model.totalBytesToFree.formatted(.byteCount(style: .file)))"
+        }
+        return title
     }
 
     // MARK: Delete action

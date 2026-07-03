@@ -35,6 +35,9 @@ final class ReviewModel {
 
     private(set) var stacks: [Stack]
 
+    /// On-disk byte size per asset id, populated once via `loadSizes`.
+    private(set) var assetSizes: [PhotoAsset.ID: Int64] = [:]
+
     init(stacks: [PhotoStack]) {
         self.stacks = stacks.map { stack in
             Stack(
@@ -58,6 +61,32 @@ final class ReviewModel {
     /// Every asset id the user has confirmed for deletion, across all stacks.
     var assetsToDelete: [PhotoAsset.ID] {
         stacks.flatMap { Array($0.checkedForDeletion) }
+    }
+
+    // MARK: - Reclaimable space
+
+    /// Bytes freed if the checked photos in one stack are deleted.
+    func bytesToFree(inStack stackID: UUID) -> Int64 {
+        guard let stack = stacks.first(where: { $0.id == stackID }) else { return 0 }
+        return stack.checkedForDeletion.reduce(0) { $0 + (assetSizes[$1] ?? 0) }
+    }
+
+    /// Bytes freed across the whole current selection.
+    var totalBytesToFree: Int64 {
+        stacks.reduce(0) { total, stack in
+            total + stack.checkedForDeletion.reduce(0) { $0 + (assetSizes[$1] ?? 0) }
+        }
+    }
+
+    /// Fetch on-disk sizes for every asset in the review, once. Cheap metadata
+    /// lookup batched into a single query; safe to call again (skips known ids).
+    func loadSizes(using library: PhotoLibraryService) async {
+        let unknown = stacks
+            .flatMap { $0.assets.map(\.id) }
+            .filter { assetSizes[$0] == nil }
+        guard !unknown.isEmpty else { return }
+        let sizes = library.fileSizes(for: unknown)
+        assetSizes.merge(sizes) { _, new in new }
     }
 
     // MARK: - Edits

@@ -11,6 +11,7 @@ import SwiftUI
 
 struct StackCardView: View {
     let stack: ReviewModel.Stack
+    let reclaimBytes: Int64
     let onOpenPreview: (PhotoAsset.ID) -> Void
     let onToggleDeletion: (PhotoAsset.ID) -> Void
     let onMakeBest: (PhotoAsset.ID) -> Void
@@ -59,7 +60,11 @@ struct StackCardView: View {
     private var subtitle: String {
         let n = stack.checkedForDeletion.count
         if n == 0 { return "Keeping all — tap photos to remove" }
-        return "Keeping the ★ best shot, removing \(n)"
+        var text = "Keeping the ★ best shot, removing \(n)"
+        if reclaimBytes > 0 {
+            text += " · frees ~\(reclaimBytes.formatted(.byteCount(style: .file)))"
+        }
+        return text
     }
 
     // MARK: Filmstrip

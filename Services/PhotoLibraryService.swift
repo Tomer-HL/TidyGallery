@@ -225,6 +225,34 @@ final class PhotoLibraryService {
         }
     }
 
+    // MARK: - On-disk sizes
+
+    /// Total on-disk byte size for each asset id, fetched in one query.
+    ///
+    /// Sums every `PHAssetResource` for the asset (original + any edited render),
+    /// which is what deleting it actually frees. `fileSize` isn't a public
+    /// property, so we read it via KVC — the long-standing, widely-used approach;
+    /// assets whose size can't be read are simply omitted.
+    func fileSizes(for identifiers: [String]) -> [String: Int64] {
+        guard !identifiers.isEmpty else { return [:] }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+
+        var sizes: [String: Int64] = [:]
+        fetched.enumerateObjects { asset, _, _ in
+            let resources = PHAssetResource.assetResources(for: asset)
+            var total: Int64 = 0
+            var found = false
+            for resource in resources {
+                if let number = resource.value(forKey: "fileSize") as? NSNumber {
+                    total += number.int64Value
+                    found = true
+                }
+            }
+            if found { sizes[asset.localIdentifier] = total }
+        }
+        return sizes
+    }
+
     // MARK: - Deletion (Phase 2 entry point — kept here for cohesion)
 
     /// Deletes assets by identifier. **This is the only method that removes
