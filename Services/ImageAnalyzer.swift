@@ -14,10 +14,11 @@
 //  Swift-only Vision types, whose symbol names shift between SDK versions.
 //  These names have been stable since iOS 13 and compile reliably.
 //
-//  The iOS 18+ image-aesthetics score is intentionally NOT wired up yet — its
-//  new-API symbols need on-device verification. `ShotScore.aesthetics` is left
-//  `nil`, which the scorer treats as a neutral value, so ranking is unaffected.
-//  It can be layered in later without touching the rest of the pipeline.
+//  Image aesthetics use Apple's newer async Vision request
+//  (`CalculateImageAestheticsScoresRequest`, iOS 18+/macOS 15+) — it doesn't run
+//  on the iOS Simulator but works on device and on the CI Mac. It's best-effort:
+//  a failure leaves `ShotScore.aesthetics` nil, which the scorer treats as
+//  neutral, so ranking still works.
 //
 //  Concurrency: request objects are created and consumed entirely inside the
 //  actor and never escape, so nothing non-`Sendable` crosses a boundary.
@@ -46,13 +47,13 @@ actor ImageAnalyzer {
     /// The feature print is required (clustering depends on it); if Vision can't
     /// produce one we throw. Face analysis is best-effort — a failure there
     /// degrades to "no faces" rather than failing the whole image.
-    func analyze(image: CGImage, isFavorite: Bool) throws -> AnalyzedImage {
+    func analyze(image: CGImage, isFavorite: Bool) async throws -> AnalyzedImage {
         let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
 
         let featurePrintRequest = VNGenerateImageFeaturePrintRequest()
         let faceRequest = VNDetectFaceLandmarksRequest()
 
-        // Both requests run in a single handler pass over the image.
+        // Feature print + faces run in a single classic-API handler pass.
         try handler.perform([featurePrintRequest, faceRequest])
 
         guard
@@ -66,13 +67,31 @@ actor ImageAnalyzer {
         let faces = faceRequest.results as? [VNFaceObservation] ?? []
         let faceQuality = Self.evaluateFaces(faces)
 
+        // On-device aesthetics via the newer async Vision request (best-effort).
+        let aesthetics = await Self.aestheticsScore(for: image)
+
         let score = ShotScore(
             sharpness: sharpness,
-            aesthetics: nil,            // deferred; scorer treats nil as neutral
+            aesthetics: aesthetics,
             faceQuality: faceQuality,
             isFavorite: isFavorite
         )
         return AnalyzedImage(featurePrint: print, score: score)
+    }
+
+    // MARK: - Aesthetics (newer Vision API)
+
+    /// Apple's overall image-aesthetics score, normalised from its native
+    /// `[-1, 1]` range to `[0, 1]`. Returns `nil` if unavailable (e.g. running on
+    /// the iOS Simulator, or the request fails) so the scorer falls back to neutral.
+    private static func aestheticsScore(for image: CGImage) async -> Double? {
+        do {
+            let request = CalculateImageAestheticsScoresRequest()
+            let observation = try await request.perform(on: image)
+            return (Double(observation.overallScore) + 1.0) / 2.0
+        } catch {
+            return nil
+        }
     }
 
     // MARK: - Feature print → Sendable vector
