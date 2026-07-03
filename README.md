@@ -129,6 +129,42 @@ so calibration runs there as a command-line tool (`CalibrationTool/main.swift`).
 The iOS test suite (`TidyGalleryTests`) still runs on the simulator and covers
 all the pure logic; only the Vision-embedding calibration needs the macOS tool.
 
-## Not yet built (Phase 2)
+## Run it on your iPhone (free, no Mac)
 
-SwiftUI stacks gallery, star badge on the best shot, toggle/override selection, and the confirmation flow that calls the already-present `PhotoLibraryService.deleteAssets(withIdentifiers:)`.
+CI builds an **unsigned** `.ipa`; you sign and install it on your phone with a
+**free Apple ID** — no Mac, no $99 developer account. Caveats up front: the app
+expires after **7 days** (re-install to refresh), a free Apple ID allows **3
+sideloaded apps** at once, and the tooling needs Apple's **iTunes + iCloud**
+(download from apple.com, *not* the Microsoft Store versions) for the device
+drivers.
+
+**1. Get the build.** Actions tab → **Build IPA (unsigned)** → Run workflow (or
+use the latest run) → when green, open the run → **Artifacts** → download
+`TidyGallery-ipa` → unzip to get `TidyGallery-unsigned.ipa`.
+
+**2. Install a sideload tool (pick one):**
+- **Sideloadly** (simplest for a one-off) — sideloadly.io. Plug in your iPhone,
+  drag the `.ipa` in, enter your Apple ID, click **Start**. Done.
+- **AltStore** (auto-refreshes so it doesn't expire while your PC is on the same
+  Wi-Fi) — altstore.io. Install AltServer on Windows, then AltStore on the phone,
+  then add the `.ipa` from within AltStore.
+
+**3. Trust the certificate.** On the iPhone: Settings → General → **VPN & Device
+Management** → tap your Apple ID → **Trust**.
+
+**4. Launch TidyGallery.** It'll ask for photo access on first run — that's the
+`NSPhotoLibraryUsageDescription` prompt. Then tap **Scan my library**.
+
+If a step fails (Apple ID two-factor, driver issues, "app not available"),
+that's usually the sideload tool, not the build — the `.ipa` in the artifact is
+the same one either tool signs.
+
+## Built so far
+
+Phase 1 (engine): batch fetch, feature-print clustering with time-gating,
+blur/face/aesthetics scoring, calibrated thresholds, SwiftData cache, and
+incremental re-scan via a change observer.
+
+Phase 2 (UI): tabbed home (Duplicates / Screenshots), stack cards with
+filmstrips, star best-shot and pre-selected duplicates, full-screen zoomable
+preview, reclaimable-storage estimates, and confirmation-gated deletion.

@@ -38,6 +38,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tidygallery.app
         TARGETED_DEVICE_FAMILY: "1"   # iPhone
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
         # Photo-library permission string, injected into the generated Info.plist.
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "TidyGallery analyses your photos entirely on-device to suggest duplicates you can clean up. Nothing is ever deleted without your confirmation."
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

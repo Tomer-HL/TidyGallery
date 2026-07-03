@@ -1,0 +1,63 @@
+name: Build IPA (unsigned)
+
+# Builds an UNSIGNED .ipa for sideloading. It won't install on its own — you
+# sign it on your PC with a free Apple ID using Sideloadly or AltStore (see the
+# README's "Run it on your iPhone" section). Trigger it manually from the
+# Actions tab (Run workflow) whenever you want a fresh build.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive (unsigned, device)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project TidyGallery.xcodeproj \
+            -scheme TidyGallery \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/TidyGallery.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+
+      - name: Package unsigned .ipa
+        run: |
+          APP_PATH="build/TidyGallery.xcarchive/Products/Applications/TidyGallery.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ Built app not found at $APP_PATH"; exit 1
+          fi
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          (cd build && zip -qry TidyGallery-unsigned.ipa Payload)
+          echo "Built:"; ls -lh build/TidyGallery-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TidyGallery-ipa
+          path: build/TidyGallery-unsigned.ipa
+          if-no-files-found: error
