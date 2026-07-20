@@ -376,13 +376,24 @@ final class PhotoLibraryService {
     /// photos, and it is only ever invoked after explicit user confirmation in
     /// the UI.** The system also shows its own confirmation sheet.
     ///
+    /// Concurrency: this method is deliberately `nonisolated`. `PHPhotoLibrary`
+    /// runs the change block *and* fires its completion on its own private
+    /// background queue (`com.apple.PHPhotoLibrary.changes`). If this awaited
+    /// from the main actor, the Swift 6 runtime's isolation check would assert
+    /// it's on the main queue when the completion lands on the Photos queue and
+    /// **trap** (`EXC_BREAKPOINT` / `dispatch_assert_queue_fail`). Running the
+    /// call off any actor removes that requirement; the caller re-hops to
+    /// `@MainActor` normally when this async method returns. The assets are also
+    /// fetched *inside* the change block so no non-`Sendable` `PHFetchResult`
+    /// is captured across the `@Sendable` boundary.
+    ///
     /// - Returns: `true` if the user confirmed and deletion succeeded.
     @discardableResult
-    func deleteAssets(withIdentifiers ids: [String]) async throws -> Bool {
+    nonisolated func deleteAssets(withIdentifiers ids: [String]) async throws -> Bool {
         guard !ids.isEmpty else { return false }
-        let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
         do {
             try await PHPhotoLibrary.shared().performChanges {
+                let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
                 PHAssetChangeRequest.deleteAssets(assets)
             }
             return true
