@@ -165,6 +165,31 @@ Phase 1 (engine): batch fetch, feature-print clustering with time-gating,
 blur/face/aesthetics scoring, calibrated thresholds, SwiftData cache, and
 incremental re-scan via a change observer.
 
-Phase 2 (UI): tabbed home (Duplicates / Screenshots), stack cards with
-filmstrips, star best-shot and pre-selected duplicates, full-screen zoomable
-preview, reclaimable-storage estimates, and confirmation-gated deletion.
+Phase 2 (UI): stack cards with filmstrips, star best-shot and pre-selected
+duplicates, full-screen zoomable preview, reclaimable-storage estimates, and
+confirmation-gated deletion.
+
+Phase 3 (more categories): the home is now a CleanMy®Phone-style category
+overview (`CleanupHomeView`) rather than a tab bar, since there are now six
+cleanup categories. "Duplicates" keeps the best-shot review flow; five
+standalone categories share one reusable grid screen (`AssetCleanupScreen`):
+
+- **Large videos** — every video, sorted largest-file-first, with duration.
+- **Big files** — Live Photos plus the largest stills. Reading real on-disk
+  size for a whole library is expensive, so the candidate pool is bounded to
+  Live Photos + the highest-resolution stills, and only those are measured.
+- **Screen recordings** — detected heuristically (iOS has no public smart-album
+  subtype) via ReplayKit's `RPReplay…` filename prefix; degrades to empty.
+- **Possibly blurry** — standalone soft shots, flagged by an *absolute*
+  sharpness gate. Because Laplacian variance is content-dependent, this is a
+  **surfacing-only** category: items are shown for review and are **never**
+  pre-selected, so a false positive costs a glance, not a photo.
+- **Screenshots** — as before, now on the shared screen.
+
+Safety is unchanged: none of the standalone categories pre-select anything. The
+user multi-selects and confirms, and deletion still routes through the single
+`PhotoLibraryService.deleteAssets` path (which also triggers the system's own
+confirmation sheet). Favorites remain hard-locked out of duplicate pre-selection
+and out of the blurry list. New category thresholds live in
+`AnalysisConfiguration`; new files are picked up automatically by XcodeGen's
+directory globs, so `project.yml` needs no edits.

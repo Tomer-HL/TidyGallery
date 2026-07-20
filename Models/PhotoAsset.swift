@@ -22,6 +22,15 @@ import CoreLocation
 /// (optional) analysis results.
 struct PhotoAsset: Identifiable, Sendable, Hashable {
 
+    /// The kind of media an asset represents. Snapshotted from `PHAsset.mediaType`
+    /// so the value type alone is enough to route an asset to the right cleanup
+    /// category without re-touching the Photos framework.
+    enum MediaKind: String, Sendable, Hashable, Codable {
+        case image
+        case video
+        case unknown
+    }
+
     // MARK: Identity
 
     /// Stable identity used everywhere: SwiftUI, the cache, and to re-fetch the
@@ -37,6 +46,12 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
     let isFavorite: Bool
     let latitude: Double?
     let longitude: Double?
+
+    /// Whether this asset is a still image, a video, or something else.
+    let mediaType: MediaKind
+
+    /// Playback duration in seconds. `0` for stills; meaningful for videos.
+    let duration: TimeInterval
 
     // MARK: Analysis results (populated by the pipeline; nil until analysed)
 
@@ -57,6 +72,8 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
         pixelHeight: Int,
         isFavorite: Bool,
         coordinate: CLLocationCoordinate2D?,
+        mediaType: MediaKind = .image,
+        duration: TimeInterval = 0,
         featurePrint: FeaturePrint? = nil,
         score: ShotScore? = nil
     ) {
@@ -68,6 +85,8 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
         self.isFavorite = isFavorite
         self.latitude = coordinate?.latitude
         self.longitude = coordinate?.longitude
+        self.mediaType = mediaType
+        self.duration = duration
         self.featurePrint = featurePrint
         self.score = score
     }
@@ -76,6 +95,9 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
 
     /// Whether analysis has completed for this asset.
     var isAnalysed: Bool { featurePrint != nil && score != nil }
+
+    /// Convenience flag for UI that decorates video tiles.
+    var isVideo: Bool { mediaType == .video }
 
     var coordinate: CLLocationCoordinate2D? {
         guard let latitude, let longitude else { return nil }

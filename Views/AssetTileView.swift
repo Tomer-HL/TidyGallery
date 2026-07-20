@@ -1,17 +1,23 @@
 //
-//  ScreenshotTileView.swift
+//  AssetTileView.swift
 //  TidyGallery
 //
-//  A single screenshot in the grid. Loads its thumbnail, shows a selection
-//  circle, and dims when selected. Tap toggles selection.
+//  A single asset in a cleanup grid. Loads its thumbnail, shows a selection
+//  circle, an optional metadata subtitle (size / duration), and a play glyph for
+//  videos. Tap toggles selection. Used by every `AssetCleanupScreen` category.
 //
 
 import SwiftUI
 import UIKit
 
-struct ScreenshotTileView: View {
+struct AssetTileView: View {
     let assetID: PhotoAsset.ID
     let isSelected: Bool
+    let isVideo: Bool
+    /// Optional caption drawn along the bottom, e.g. "24.1 MB" or "1:32 · 88 MB".
+    let subtitle: String?
+    /// Singular noun for the accessibility label, e.g. "video".
+    let noun: String
     let onToggle: () -> Void
 
     @Environment(\.photoLibrary) private var library
@@ -25,6 +31,8 @@ struct ScreenshotTileView: View {
                 thumbnail.scaledToFill()
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
+            .overlay(alignment: .topLeading) { if isVideo { playGlyph } }
+            .overlay(alignment: .bottom) { if let subtitle { caption(subtitle) } }
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous)
                     .strokeBorder(isSelected ? Theme.Colors.accent : Theme.Colors.hairline,
@@ -36,7 +44,8 @@ struct ScreenshotTileView: View {
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
             .onTapGesture { onToggle() }
             .task(id: assetID) { await load() }
-            .accessibilityLabel(isSelected ? "Screenshot, selected" : "Screenshot")
+            .accessibilityLabel(isSelected ? "\(noun.capitalized), selected" : noun.capitalized)
+            .accessibilityValue(subtitle ?? "")
             .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
@@ -48,6 +57,31 @@ struct ScreenshotTileView: View {
                 Theme.Colors.surfaceMuted.overlay { ProgressView().controlSize(.small) }
             }
         }
+    }
+
+    private var playGlyph: some View {
+        Image(systemName: "play.circle.fill")
+            .font(.system(size: 20, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, .black.opacity(0.35))
+            .shadow(color: .black.opacity(0.4), radius: 2)
+            .padding(6)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity)
+            .background(
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.55)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
     }
 
     private var selectionCircle: some View {

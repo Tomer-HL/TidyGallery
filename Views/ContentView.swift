@@ -14,10 +14,10 @@ struct ContentView: View {
     @State var coordinator: LibraryScanCoordinator
 
     var body: some View {
-        // The finished state is a TabView whose tabs own their own navigation;
+        // The finished state is the category overview home (its own navigation);
         // the transient scan states are simple centered screens.
         if case .finished = coordinator.phase {
-            MainTabView(coordinator: coordinator)
+            CleanupHomeView(coordinator: coordinator)
         } else {
             ZStack {
                 Theme.Colors.background.ignoresSafeArea()
@@ -43,7 +43,7 @@ struct ContentView: View {
                          title: "Scan failed",
                          detail: message)
         case .finished:
-            EmptyView()   // handled above by MainTabView
+            EmptyView()   // handled above by CleanupHomeView
         }
     }
 

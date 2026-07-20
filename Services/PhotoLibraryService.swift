@@ -163,10 +163,78 @@ final class PhotoLibraryService {
         return result
     }
 
+    /// All videos in the library, newest first, as `Sendable` snapshots (each
+    /// carrying its `duration`). Ordering by real file size is done by the UI
+    /// once sizes have been measured, since size isn't a fetchable sort key.
+    func fetchVideos() -> [PhotoAsset] {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.includeHiddenAssets = false
+        let assets = PHAsset.fetchAssets(with: .video, options: options)
+
+        var result: [PhotoAsset] = []
+        result.reserveCapacity(assets.count)
+        assets.enumerateObjects { asset, _, _ in
+            result.append(Self.snapshot(asset))
+        }
+        return result
+    }
+
+    /// Screen recordings, detected heuristically. iOS exposes no public
+    /// smart-album subtype for screen recordings, so we match ReplayKit's
+    /// `RPReplay…` filename prefix (and a loose `screen` fallback) on each
+    /// video's primary resource. Everything stays on-device; if nothing
+    /// matches we simply return an empty list.
+    func fetchScreenRecordings() -> [PhotoAsset] {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.includeHiddenAssets = false
+        let assets = PHAsset.fetchAssets(with: .video, options: options)
+
+        var result: [PhotoAsset] = []
+        assets.enumerateObjects { asset, _, _ in
+            let name = PHAssetResource.assetResources(for: asset)
+                .first?.originalFilename.lowercased() ?? ""
+            if name.hasPrefix("rpreplay") || name.contains("screenrecording") || name.contains("screen recording") {
+                result.append(Self.snapshot(asset))
+            }
+        }
+        return result
+    }
+
+    /// Candidate set for the "Big files" category: every Live Photo plus the
+    /// highest-resolution stills (up to `stillLimit`). Reading real on-disk size
+    /// for a whole library is expensive, so we bound the pool cheaply here —
+    /// resolution is a good proxy for which stills are large — and let the UI
+    /// measure exact sizes for just this set via `fileSizes(for:)` and sort.
+    func fetchLargeFileCandidates(stillLimit: Int) -> [PhotoAsset] {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "pixelWidth", ascending: false)]
+        options.includeHiddenAssets = false
+        let assets = PHAsset.fetchAssets(with: .image, options: options)
+
+        var result: [PhotoAsset] = []
+        var stillsAdded = 0
+        assets.enumerateObjects { asset, _, _ in
+            if asset.mediaSubtypes.contains(.photoLive) {
+                result.append(Self.snapshot(asset))          // always include Live Photos
+            } else if stillsAdded < stillLimit {
+                result.append(Self.snapshot(asset))          // top-resolution stills
+                stillsAdded += 1
+            }
+        }
+        return result
+    }
+
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`
     /// value type. Called on the main actor while the asset is valid.
     private static func snapshot(_ asset: PHAsset) -> PhotoAsset {
-        PhotoAsset(
+        let kind: PhotoAsset.MediaKind = switch asset.mediaType {
+        case .image: .image
+        case .video: .video
+        default: .unknown
+        }
+        return PhotoAsset(
             id: asset.localIdentifier,
             creationDate: asset.creationDate,
             modificationDate: asset.modificationDate,
@@ -174,6 +242,8 @@ final class PhotoLibraryService {
             pixelHeight: asset.pixelHeight,
             isFavorite: asset.isFavorite,
             coordinate: asset.location?.coordinate,
+            mediaType: kind,
+            duration: asset.duration,
             featurePrint: nil,
             score: nil
         )

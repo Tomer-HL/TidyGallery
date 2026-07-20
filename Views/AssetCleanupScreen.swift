@@ -1,15 +1,20 @@
 //
-//  ScreenshotsScreen.swift
+//  AssetCleanupScreen.swift
 //  TidyGallery
 //
-//  A grid of all screenshots with multi-select and a confirmation-gated delete.
-//  Screenshots aren't near-duplicates, so there's no best-shot logic — just pick
-//  the ones to clear. Reuses the size estimate and the safe deletion path.
+//  One reusable grid screen for every "flat list" cleanup category: screenshots,
+//  large videos, big files, screen recordings, and possibly-blurry singles.
+//  There is no best-shot logic here (that lives in `ReviewScreen`) and NOTHING
+//  is pre-selected — the user multi-selects and confirms, and deletion routes
+//  through the single safe `PhotoLibraryService.deleteAssets` path, which also
+//  triggers the system's own confirmation sheet.
 //
 
 import SwiftUI
 
-struct ScreenshotsScreen: View {
+struct AssetCleanupScreen: View {
+    let category: CleanupCategory
+
     @State private var assets: [PhotoAsset]
     @Environment(\.photoLibrary) private var library
 
@@ -21,8 +26,24 @@ struct ScreenshotsScreen: View {
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: Theme.Spacing.s)]
 
-    init(assets: [PhotoAsset]) {
+    init(category: CleanupCategory, assets: [PhotoAsset]) {
+        self.category = category
         _assets = State(initialValue: assets)
+    }
+
+    // MARK: Derived display list
+
+    /// The assets actually shown: optionally sorted largest-file-first once
+    /// sizes are known, then capped to the category's display limit.
+    private var displayed: [PhotoAsset] {
+        var list = assets
+        if category.sortsBySizeDescending, !sizes.isEmpty {
+            list.sort { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
+        }
+        if let limit = category.displayLimit {
+            list = Array(list.prefix(limit))
+        }
+        return list
     }
 
     var body: some View {
@@ -34,12 +55,13 @@ struct ScreenshotsScreen: View {
             }
         }
         .background(Theme.Colors.background.ignoresSafeArea())
-        .navigationTitle("Screenshots")
+        .navigationTitle(category.title)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .task { await loadSizes() }
         .safeAreaInset(edge: .bottom) { deleteBar }
         .confirmationDialog(
-            "Delete \(selected.count) screenshot\(selected.count == 1 ? "" : "s")?",
+            "Delete \(selected.count) \(noun(selected.count))?",
             isPresented: $showConfirm,
             titleVisibility: .visible
         ) {
@@ -58,10 +80,13 @@ struct ScreenshotsScreen: View {
     private var grid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: Theme.Spacing.s) {
-                ForEach(assets) { asset in
-                    ScreenshotTileView(
+                ForEach(displayed) { asset in
+                    AssetTileView(
                         assetID: asset.id,
                         isSelected: selected.contains(asset.id),
+                        isVideo: category.isVideo,
+                        subtitle: subtitle(for: asset),
+                        noun: category.noun,
                         onToggle: { toggle(asset.id) }
                     )
                 }
@@ -75,15 +100,19 @@ struct ScreenshotsScreen: View {
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Button(selected.count == assets.count ? "Deselect All" : "Select All") {
-                if selected.count == assets.count {
+            Button(allSelected ? "Deselect All" : "Select All") {
+                if allSelected {
                     selected.removeAll()
                 } else {
-                    selected = Set(assets.map(\.id))
+                    selected = Set(displayed.map(\.id))
                 }
             }
             .tint(Theme.Colors.accent)
         }
+    }
+
+    private var allSelected: Bool {
+        !displayed.isEmpty && selected.count == displayed.count
     }
 
     // MARK: Delete bar
@@ -116,7 +145,7 @@ struct ScreenshotsScreen: View {
 
     private var deleteButtonTitle: String {
         if isDeleting { return "Deleting…" }
-        var title = "Delete \(selected.count) screenshot\(selected.count == 1 ? "" : "s")"
+        var title = "Delete \(selected.count) \(noun(selected.count))"
         let bytes = selectedBytes
         if bytes > 0 { title += " · frees ~\(bytes.formatted(.byteCount(style: .file)))" }
         return title
@@ -130,9 +159,9 @@ struct ScreenshotsScreen: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No screenshots", systemImage: "camera.viewfinder")
+            Label(category.emptyTitle, systemImage: category.systemImage)
         } description: {
-            Text("You don't have any screenshots to clean up right now.")
+            Text(category.emptySubtitle)
         }
         .foregroundStyle(Theme.Colors.textPrimary)
     }
@@ -150,6 +179,40 @@ struct ScreenshotsScreen: View {
                 .padding(.top, Theme.Spacing.s)
                 .transition(.move(edge: .top).combined(with: .opacity))
         }
+    }
+
+    // MARK: Per-tile subtitle
+
+    /// Size and/or duration caption for a tile, when relevant to the category.
+    private func subtitle(for asset: PhotoAsset) -> String? {
+        let sizeText = sizes[asset.id].map { $0.formatted(.byteCount(style: .file)) }
+
+        if category.isVideo {
+            let durationText = Self.formatDuration(asset.duration)
+            switch (durationText, sizeText) {
+            case let (d?, s?): return "\(d) · \(s)"
+            case let (d?, nil): return d
+            case let (nil, s?): return s
+            default: return nil
+            }
+        }
+
+        // Non-video, size-ranked categories (big files) show the size.
+        return category.sortsBySizeDescending ? sizeText : nil
+    }
+
+    private static func formatDuration(_ seconds: TimeInterval) -> String? {
+        guard seconds > 0 else { return nil }
+        let total = Int(seconds.rounded())
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
+    }
+
+    // MARK: Copy helpers
+
+    private func noun(_ count: Int) -> String {
+        count == 1 ? category.noun : category.noun + "s"
     }
 
     // MARK: Actions
@@ -177,7 +240,7 @@ struct ScreenshotsScreen: View {
             let removed = Set(ids)
             assets.removeAll { removed.contains($0.id) }
             selected.removeAll()
-            await flashBanner("Deleted \(ids.count) screenshot\(ids.count == 1 ? "" : "s")")
+            await flashBanner("Deleted \(ids.count) \(noun(ids.count))")
         } catch {
             await flashBanner("Couldn't delete: \(error.localizedDescription)")
         }

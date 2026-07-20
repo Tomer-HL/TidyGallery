@@ -69,5 +69,25 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// that is nearly as good as the winner.
     var preselectQualityMargin: Double = 0.15
 
+    // MARK: Phase 3 — standalone cleanup categories
+
+    /// A standalone still is surfaced under "Possibly blurry" only when its
+    /// **absolute** sharpness is at or below this. Deliberately low: Laplacian
+    /// variance is content-dependent (see `BlurDetector`), so an absolute gate
+    /// can only be trusted to flag clearly-soft images. Blurry singles are a
+    /// SURFACING-ONLY category — they are never pre-selected for deletion, so a
+    /// false positive costs the user a glance, never a photo.
+    var blurrySinglesSharpnessCeiling: Double = 0.12
+
+    /// How many of the highest-resolution stills to measure as "big file"
+    /// candidates. Reading real on-disk size for a whole 20k library is
+    /// expensive, so we bound the candidate pool to the largest-by-resolution
+    /// stills (plus all Live Photos) and measure only those.
+    var bigFileCandidateStillLimit: Int = 300
+
+    /// How many entries the "Big files" screen shows after measuring real sizes
+    /// and sorting largest-first.
+    var bigFileDisplayLimit: Int = 100
+
     static let `default` = AnalysisConfiguration()
 }

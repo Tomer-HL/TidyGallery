@@ -33,8 +33,27 @@ final class LibraryScanCoordinator {
     private(set) var phase: Phase = .idle
     private(set) var stacks: [PhotoStack] = []
 
-    /// All screenshots in the library (a separate cleanup category).
+    // MARK: Standalone cleanup categories (Phase 3)
+    //
+    // Each is a flat list the UI surfaces for manual review. NONE of these is
+    // ever pre-selected for deletion — the user selects within each screen and
+    // confirms, keeping the app's safety-first guarantee intact.
+
+    /// All screenshots in the library.
     private(set) var screenshots: [PhotoAsset] = []
+
+    /// All videos, for the "Large videos" screen (sorted by size in the UI).
+    private(set) var largeVideos: [PhotoAsset] = []
+
+    /// Live Photos + highest-resolution stills, for the "Big files" screen.
+    private(set) var bigFileCandidates: [PhotoAsset] = []
+
+    /// Videos detected as screen recordings.
+    private(set) var screenRecordings: [PhotoAsset] = []
+
+    /// Standalone stills that look clearly soft (surfacing only, never
+    /// pre-selected). Excludes favorites and anything already in a duplicate stack.
+    private(set) var blurryPhotos: [PhotoAsset] = []
 
     // MARK: Collaborators
 
@@ -107,7 +126,7 @@ final class LibraryScanCoordinator {
         analysedAssets = enriched
         let stacks = buildStacks(from: enriched)
         self.stacks = stacks
-        screenshots = library.fetchScreenshots()
+        refreshCategories()
         phase = .finished(stackCount: stacks.count)
 
         startObserving()
@@ -170,10 +189,38 @@ final class LibraryScanCoordinator {
             analysedAssets.append(contentsOf: updated)
         }
 
-        // Re-cluster from the updated working set, and refresh screenshots.
+        // Re-cluster from the updated working set, and refresh categories.
         stacks = buildStacks(from: analysedAssets)
-        screenshots = library.fetchScreenshots()
+        refreshCategories()
         phase = .finished(stackCount: stacks.count)
+    }
+
+    // MARK: - Cleanup categories
+
+    /// Recomputes every standalone cleanup category. Cheap metadata fetches plus
+    /// the blurry-singles derivation from already-analysed assets; safe to call
+    /// after a full scan and after each library delta.
+    private func refreshCategories() {
+        screenshots = library.fetchScreenshots()
+        largeVideos = library.fetchVideos()
+        screenRecordings = library.fetchScreenRecordings()
+        bigFileCandidates = library.fetchLargeFileCandidates(stillLimit: config.bigFileCandidateStillLimit)
+        blurryPhotos = deriveBlurrySingles()
+    }
+
+    /// Standalone stills that look clearly soft. Conservative and surfacing-only:
+    /// these are never pre-selected for deletion. Excludes favorites and any
+    /// asset already grouped into a duplicate stack (so it isn't shown twice).
+    private func deriveBlurrySingles() -> [PhotoAsset] {
+        let grouped = Set(stacks.flatMap { $0.assets.map(\.id) })
+        return analysedAssets
+            .filter { asset in
+                guard asset.mediaType == .image, !asset.isFavorite else { return false }
+                guard !grouped.contains(asset.id) else { return false }
+                guard let sharpness = asset.score?.sharpness else { return false }
+                return sharpness <= config.blurrySinglesSharpnessCeiling
+            }
+            .sorted { ($0.score?.sharpness ?? 0) < ($1.score?.sharpness ?? 0) }
     }
 
     // MARK: - Per-page processing
