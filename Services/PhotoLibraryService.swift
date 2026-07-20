@@ -207,23 +207,34 @@ final class PhotoLibraryService {
     /// for a whole library is expensive, so we bound the pool cheaply here —
     /// resolution is a good proxy for which stills are large — and let the UI
     /// measure exact sizes for just this set via `fileSizes(for:)` and sort.
+    ///
+    /// Note: `PHFetchOptions` only supports sorting by creation/modification
+    /// date, so we do NOT sort the fetch by resolution (that would raise at
+    /// runtime). We snapshot into value types — releasing each `PHAsset` as the
+    /// lazy enumeration advances, so peak memory stays bounded — then rank the
+    /// (small) `PhotoAsset` snapshots by pixel area in memory.
     func fetchLargeFileCandidates(stillLimit: Int) -> [PhotoAsset] {
         let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "pixelWidth", ascending: false)]
         options.includeHiddenAssets = false
         let assets = PHAsset.fetchAssets(with: .image, options: options)
 
-        var result: [PhotoAsset] = []
-        var stillsAdded = 0
+        var livePhotos: [PhotoAsset] = []
+        var stills: [PhotoAsset] = []
         assets.enumerateObjects { asset, _, _ in
+            let snapshot = Self.snapshot(asset)
             if asset.mediaSubtypes.contains(.photoLive) {
-                result.append(Self.snapshot(asset))          // always include Live Photos
-            } else if stillsAdded < stillLimit {
-                result.append(Self.snapshot(asset))          // top-resolution stills
-                stillsAdded += 1
+                livePhotos.append(snapshot)                  // always include Live Photos
+            } else {
+                stills.append(snapshot)
             }
         }
-        return result
+
+        // Highest pixel area first (a cheap proxy for file size), capped.
+        let topStills = stills
+            .sorted { ($0.pixelWidth * $0.pixelHeight) > ($1.pixelWidth * $1.pixelHeight) }
+            .prefix(stillLimit)
+
+        return livePhotos + Array(topStills)
     }
 
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`
