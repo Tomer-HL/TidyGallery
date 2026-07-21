@@ -17,6 +17,9 @@ struct StackCardView: View {
     let onMakeBest: (PhotoAsset.ID) -> Void
     let onSelectAllExtras: () -> Void
     let onKeepAll: () -> Void
+    /// Ask to explain why a photo scored as it did. Optional so the card works
+    /// without it; nothing is computed unless the user actually asks.
+    var onExplain: ((PhotoAsset.ID) -> Void)?
 
     @Environment(\.colorScheme) private var scheme
 
@@ -81,6 +84,15 @@ struct StackCardView: View {
                         onToggleDeletion: { onToggleDeletion(id) },
                         onMakeBest: { onMakeBest(id) }
                     )
+                    .contextMenu {
+                        if let onExplain, stack.asset(id)?.score != nil {
+                            Button {
+                                onExplain(id)
+                            } label: {
+                                Label("Why this photo?", systemImage: "info.circle")
+                            }
+                        }
+                    }
                 }
             }
             .padding(.vertical, Theme.Spacing.xs)

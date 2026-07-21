@@ -20,6 +20,16 @@ struct ReviewScreen: View {
     @State private var isDeleting = false
     @State private var banner: String?
     @State private var preview: PreviewContext?
+    /// Which photo's score breakdown is open. Built on demand only.
+    @State private var explaining: ExplainContext?
+
+    /// Identifies the photo being explained and the stack it belongs to, so the
+    /// breakdown can compare it against that group's best shot.
+    private struct ExplainContext: Identifiable {
+        let id = UUID()
+        let stackID: UUID
+        let assetID: PhotoAsset.ID
+    }
 
     /// Identifies which photo (and stack) the full-screen preview should open at.
     private struct PreviewContext: Identifiable {
@@ -62,6 +72,9 @@ struct ReviewScreen: View {
         .fullScreenCover(item: $preview) { ctx in
             PhotoPreviewView(model: model, stackID: ctx.stackID, startAssetID: ctx.startAssetID)
         }
+        .sheet(item: $explaining) { ctx in
+            breakdown(for: ctx)
+        }
     }
 
     // MARK: List
@@ -77,7 +90,8 @@ struct ReviewScreen: View {
                         onToggleDeletion: { model.toggleDeletion(of: $0, inStack: stack.id) },
                         onMakeBest: { model.setBestShot($0, inStack: stack.id) },
                         onSelectAllExtras: { model.checkAllExtras(inStack: stack.id) },
-                        onKeepAll: { model.clearChecks(inStack: stack.id) }
+                        onKeepAll: { model.clearChecks(inStack: stack.id) },
+                        onExplain: { explaining = ExplainContext(stackID: stack.id, assetID: $0) }
                     )
                 }
             }
@@ -151,6 +165,25 @@ struct ReviewScreen: View {
             title += " · frees ~\(model.totalBytesToFree.formatted(.byteCount(style: .file)))"
         }
         return title
+    }
+
+    // MARK: Score breakdown
+
+    /// Builds the breakdown for one photo, comparing it against its group's best
+    /// shot. Only ever constructed when the user opens the sheet.
+    @ViewBuilder
+    private func breakdown(for ctx: ExplainContext) -> some View {
+        if let stack = model.stacks.first(where: { $0.id == ctx.stackID }),
+           let asset = stack.asset(ctx.assetID),
+           let score = asset.score {
+            let isBest = ctx.assetID == stack.bestShotID
+            ScoreBreakdownView(
+                score: score,
+                bestShotScore: isBest ? nil : stack.asset(stack.bestShotID)?.score,
+                isBestShot: isBest,
+                config: .default
+            )
+        }
     }
 
     // MARK: Delete action

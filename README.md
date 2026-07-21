@@ -230,6 +230,21 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 12 (explainability): long-press any photo — in a cleanup grid or a
+duplicate stack — for "Why this photo?". `ScoreBreakdownView` shows the metric
+bars the engine actually scored it on (sharpness, aesthetics, face quality) plus
+plain-language observations from `ScoreExplanation`: "Someone's eyes look
+closed", "Softer than the best shot", "Very close in quality to the best shot".
+Inside a stack it compares against that group's best shot, so a recommendation
+reads as reasoning rather than an edict.
+
+The wording logic is pure and tested — it must never contradict the numbers, so
+`ScoreExplanationTests` pins things like never inventing face observations for a
+photo with no faces, and describing a near-tie as close rather than "clearly
+worse". **Cost at scan time: none.** It's arithmetic over a `ShotScore` that was
+already computed and cached, built for a single photo only when the sheet opens;
+grids never construct it.
+
 Phase 11 (scan performance): four fixes, in rough order of impact.
 
 1. **Batched cache writes.** `store` issued a fetch *and* a `save()` per photo,

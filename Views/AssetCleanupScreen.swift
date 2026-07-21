@@ -32,6 +32,9 @@ struct AssetCleanupScreen: View {
     @State private var sortOrder: CleanupSortOrder
     @State private var ageFilter: CleanupAgeFilter = .all
     @State private var isExporting = false
+    /// The photo whose score breakdown is open, if any. Built only on demand —
+    /// tiles never compute an explanation.
+    @State private var explaining: PhotoAsset?
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: Theme.Spacing.s)]
 
@@ -120,6 +123,11 @@ struct AssetCleanupScreen: View {
             Text("They'll move to Recently Deleted, where you can recover them for 30 days.")
         }
         .overlay(alignment: .top) { bannerView }
+        .sheet(item: $explaining) { asset in
+            if let score = asset.score {
+                ScoreBreakdownView(score: score, config: .default)
+            }
+        }
     }
 
     // MARK: Grid
@@ -136,6 +144,15 @@ struct AssetCleanupScreen: View {
                         noun: category.noun,
                         onToggle: { toggle(asset.id) }
                     )
+                    .contextMenu {
+                        if asset.score != nil {
+                            Button {
+                                explaining = asset
+                            } label: {
+                                Label("Why this photo?", systemImage: "info.circle")
+                            }
+                        }
+                    }
                 }
             }
             .padding(Theme.Spacing.l)
