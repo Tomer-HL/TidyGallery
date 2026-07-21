@@ -696,6 +696,12 @@ final class LibraryScanCoordinator {
 
         guard !toAnalyse.isEmpty else { return (enriched, 0) }
 
+        // Read main-actor state ONCE here, while we're still on the main actor.
+        // The task-group body below is a nonisolated context, so touching a
+        // mutable `@MainActor` property (like `tuning`) from inside it is an
+        // isolation error — capture the plain value instead.
+        let allowNetwork = tuning.analyseICloudPhotos
+
         // 2. Analyse misses with bounded concurrency.
         return try await withThrowingTaskGroup(of: PageResult.self) { group in
             var inFlight = 0
@@ -703,7 +709,6 @@ final class LibraryScanCoordinator {
 
             func addTask(_ index: Int) {
                 let asset = enriched[index]
-                let allowNetwork = tuning.analyseICloudPhotos
                 group.addTask { [library, analyzer] in
                     switch await library.analysisImage(for: asset.id, allowNetwork: allowNetwork) {
                     case let .image(cgImage):
