@@ -74,6 +74,11 @@ final class LibraryScanCoordinator {
     private var changeObserver: PhotoLibraryChangeObserver?
     private var observationTask: Task<Void, Never>?
 
+    /// Debounce handle for the expensive re-cluster + category re-fetch. A burst
+    /// of change events (several quick deletions, a batch import) reschedules
+    /// this so the heavy pass runs once, after things settle.
+    private var recomputeTask: Task<Void, Never>?
+
     init(
         library: PhotoLibraryService,
         analyzer: ImageAnalyzer,
@@ -189,10 +194,10 @@ final class LibraryScanCoordinator {
             analysedAssets.append(contentsOf: updated)
         }
 
-        // Re-cluster from the updated working set, and refresh categories.
-        stacks = buildStacks(from: analysedAssets)
-        refreshCategories()
-        phase = .finished(stackCount: stacks.count)
+        // Coalesce the expensive re-cluster + full category re-fetch. Cheap
+        // bookkeeping above (cache purge, working-set delta) has already run;
+        // the heavy pass is debounced so a burst of changes triggers it once.
+        scheduleRecompute()
     }
 
     // MARK: - Cleanup categories
@@ -221,6 +226,57 @@ final class LibraryScanCoordinator {
                 return sharpness <= config.blurrySinglesSharpnessCeiling
             }
             .sorted { ($0.score?.sharpness ?? 0) < ($1.score?.sharpness ?? 0) }
+    }
+
+    /// Debounced heavy recompute: re-clusters stacks from the current working
+    /// set and re-fetches every category from the library. Rescheduling cancels
+    /// any pending pass, so a burst of change events collapses to a single run.
+    private func scheduleRecompute() {
+        recomputeTask?.cancel()
+        recomputeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            self.stacks = self.buildStacks(from: self.analysedAssets)
+            self.refreshCategories()
+            self.phase = .finished(stackCount: self.stacks.count)
+        }
+    }
+
+    /// Immediately reconcile every published list after the user deletes assets
+    /// from a category screen. This keeps the home counts and *other* category
+    /// screens correct at once — cheap, in-memory, no library re-enumeration —
+    /// rather than waiting for the debounced observer pass. The observer still
+    /// fires and reconciles any external changes afterwards.
+    func noteDeleted(ids: [PhotoAsset.ID]) {
+        guard !ids.isEmpty else { return }
+        let removed = Set(ids)
+        analysedAssets.removeAll { removed.contains($0.id) }
+        screenshots.removeAll { removed.contains($0.id) }
+        largeVideos.removeAll { removed.contains($0.id) }
+        bigFileCandidates.removeAll { removed.contains($0.id) }
+        screenRecordings.removeAll { removed.contains($0.id) }
+        blurryPhotos.removeAll { removed.contains($0.id) }
+        pruneStacks(removing: removed)
+        phase = .finished(stackCount: stacks.count)
+    }
+
+    /// Drop deleted assets from existing stacks without re-clustering. A stack
+    /// that falls to a single photo is removed (no longer a cleanup group); if
+    /// the best shot was deleted, the top surviving ranked photo inherits it.
+    private func pruneStacks(removing removed: Set<PhotoAsset.ID>) {
+        stacks = stacks.compactMap { stack in
+            let remaining = stack.assets.filter { !removed.contains($0.id) }
+            guard remaining.count > 1 else { return nil }
+            let ranked = stack.rankedAssetIDs.filter { !removed.contains($0) }
+            let best = removed.contains(stack.bestShotID) ? (ranked.first ?? remaining[0].id) : stack.bestShotID
+            return PhotoStack(
+                id: stack.id,
+                assets: remaining,
+                bestShotID: best,
+                rankedAssetIDs: ranked,
+                assetsPreselectedForDeletion: stack.assetsPreselectedForDeletion.subtracting(removed)
+            )
+        }
     }
 
     // MARK: - Per-page processing

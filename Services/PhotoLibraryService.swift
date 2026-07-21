@@ -181,10 +181,13 @@ final class PhotoLibraryService {
     }
 
     /// Screen recordings, detected heuristically. iOS exposes no public
-    /// smart-album subtype for screen recordings, so we match ReplayKit's
-    /// `RPReplay…` filename prefix (and a loose `screen` fallback) on each
-    /// video's primary resource. Everything stays on-device; if nothing
-    /// matches we simply return an empty list.
+    /// smart-album subtype for them, so we match ReplayKit's filename signature:
+    /// Control-Center recordings are written as `RPReplay_Final…​.mp4` /
+    /// `RPReplay_Original…`, so an `RPReplay` prefix on *any* of the asset's
+    /// resources is the reliable on-device signal. Everything stays on-device;
+    /// if nothing matches we return an empty list. (A recording the user
+    /// manually renamed won't be detected — acceptable: it just won't appear
+    /// here, never a false deletion.)
     func fetchScreenRecordings() -> [PhotoAsset] {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
@@ -193,9 +196,9 @@ final class PhotoLibraryService {
 
         var result: [PhotoAsset] = []
         assets.enumerateObjects { asset, _, _ in
-            let name = PHAssetResource.assetResources(for: asset)
-                .first?.originalFilename.lowercased() ?? ""
-            if name.hasPrefix("rpreplay") || name.contains("screenrecording") || name.contains("screen recording") {
+            let isScreenRecording = PHAssetResource.assetResources(for: asset)
+                .contains { $0.originalFilename.lowercased().hasPrefix("rpreplay") }
+            if isScreenRecording {
                 result.append(Self.snapshot(asset))
             }
         }

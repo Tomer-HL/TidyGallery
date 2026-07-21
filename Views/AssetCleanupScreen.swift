@@ -14,6 +14,9 @@ import SwiftUI
 
 struct AssetCleanupScreen: View {
     let category: CleanupCategory
+    /// Called after a successful deletion so the coordinator can reconcile the
+    /// home counts and other category screens immediately.
+    var onDeleted: ([PhotoAsset.ID]) -> Void
 
     @State private var assets: [PhotoAsset]
     @Environment(\.photoLibrary) private var library
@@ -26,8 +29,13 @@ struct AssetCleanupScreen: View {
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: Theme.Spacing.s)]
 
-    init(category: CleanupCategory, assets: [PhotoAsset]) {
+    init(
+        category: CleanupCategory,
+        assets: [PhotoAsset],
+        onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in }
+    ) {
         self.category = category
+        self.onDeleted = onDeleted
         _assets = State(initialValue: assets)
     }
 
@@ -240,6 +248,7 @@ struct AssetCleanupScreen: View {
             let removed = Set(ids)
             assets.removeAll { removed.contains($0.id) }
             selected.removeAll()
+            onDeleted(ids)   // reconcile home counts + other categories at once
             await flashBanner("Deleted \(ids.count) \(noun(ids.count))")
         } catch {
             await flashBanner("Couldn't delete: \(error.localizedDescription)")

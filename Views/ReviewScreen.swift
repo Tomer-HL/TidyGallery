@@ -12,6 +12,9 @@ import SwiftUI
 struct ReviewScreen: View {
     @State private var model: ReviewModel
     @Environment(\.photoLibrary) private var library
+    /// Called after a successful deletion so the coordinator can reconcile the
+    /// home counts and other category screens immediately.
+    var onDeleted: ([PhotoAsset.ID]) -> Void
 
     @State private var showConfirm = false
     @State private var isDeleting = false
@@ -25,8 +28,9 @@ struct ReviewScreen: View {
         let startAssetID: PhotoAsset.ID
     }
 
-    init(stacks: [PhotoStack]) {
+    init(stacks: [PhotoStack], onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in }) {
         _model = State(initialValue: ReviewModel(stacks: stacks))
+        self.onDeleted = onDeleted
     }
 
     var body: some View {
@@ -163,6 +167,7 @@ struct ReviewScreen: View {
             let confirmed = try await library.deleteAssets(withIdentifiers: ids)
             guard confirmed else { return }   // user cancelled the system sheet
             model.removeDeleted(ids)
+            onDeleted(ids)   // reconcile home counts + other categories at once
             await flashBanner("Deleted \(ids.count) photo\(ids.count == 1 ? "" : "s")")
         } catch {
             await flashBanner("Couldn't delete: \(error.localizedDescription)")

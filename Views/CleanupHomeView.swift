@@ -28,7 +28,10 @@ struct CleanupHomeView: View {
                         count: coordinator.stacks.count,
                         countLabel: "\(coordinator.stacks.count) group\(coordinator.stacks.count == 1 ? "" : "s")"
                     ) {
-                        ReviewScreen(stacks: coordinator.stacks)
+                        ReviewScreen(
+                            stacks: coordinator.stacks,
+                            onDeleted: { coordinator.noteDeleted(ids: $0) }
+                        )
                     }
 
                     // Standalone flat-list categories.
@@ -74,7 +77,11 @@ struct CleanupHomeView: View {
             count: assets.count,
             countLabel: "\(assets.count) \(category.noun)\(assets.count == 1 ? "" : "s")"
         ) {
-            AssetCleanupScreen(category: category, assets: assets)
+            AssetCleanupScreen(
+                category: category,
+                assets: assets,
+                onDeleted: { coordinator.noteDeleted(ids: $0) }
+            )
         }
     }
 
