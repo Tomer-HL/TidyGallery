@@ -37,10 +37,12 @@ struct TidyGalleryApp: App {
         self.library = library
 
         let cache = AnalysisCacheStore(modelContainer: container)
+        let ignoreList = IgnoreListStore(modelContainer: container)
         let coordinator = LibraryScanCoordinator(
             library: library,
             analyzer: ImageAnalyzer(),
-            cache: cache
+            cache: cache,
+            ignoreList: ignoreList
         )
         _coordinator = State(initialValue: coordinator)
     }
@@ -62,7 +64,7 @@ struct TidyGalleryApp: App {
     /// last resort fall back to an in-memory cache. Either way the app still
     /// works — it just re-analyses.
     private static func makeCacheContainer() -> ModelContainer {
-        let schema = Schema([CachedAnalysis.self])
+        let schema = Schema([CachedAnalysis.self, IgnoredAsset.self])
 
         if let container = try? ModelContainer(for: schema) {
             return container

@@ -230,6 +230,18 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 7 (ignore list): photos the user decides to keep can be marked "don't
+suggest again" from any cleanup screen ("Keep N"), and they're then filtered out
+of *every* suggestion — all categories, exact-duplicate extras, stack
+pre-selections, recommendations, and the reclaimable-space total. An "Ignored"
+card on the home opens `IgnoredAssetsScreen` to review and undo those decisions;
+that screen deliberately has no delete action.
+
+Crucially, the list lives in its **own** SwiftData entity (`IgnoredAsset` +
+`IgnoreListStore`), not in `CachedAnalysis`. The analysis cache is disposable and
+is invalidated wholesale on every `schemaVersion` bump (four so far) — user
+decisions must never be lost that way, so they carry no version coupling.
+
 Phase 6 (exact duplicates): `ExactDuplicateFinder` catches the case visual
 clustering structurally cannot — the *same* image present twice, however far
 apart in time. Rather than hashing gigabytes of original data, it exploits the

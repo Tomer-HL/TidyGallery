@@ -46,6 +46,9 @@ struct CleanupHomeView: View {
                     flatCard(.documents, assets: coordinator.documentPhotos)
                     flatCard(.nature, assets: coordinator.naturePhotos)
                     flatCard(.selfies, assets: coordinator.selfiePhotos)
+
+                    sectionHeader("Your decisions")
+                    ignoredCard
                 }
                 .padding(Theme.Spacing.l)
             }
@@ -210,7 +213,25 @@ struct CleanupHomeView: View {
             AssetCleanupScreen(
                 category: category,
                 assets: assets,
-                onDeleted: { coordinator.noteDeleted(ids: $0) }
+                onDeleted: { coordinator.noteDeleted(ids: $0) },
+                onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } }
+            )
+        }
+    }
+
+    /// Review and undo "don't suggest again" decisions.
+    private var ignoredCard: some View {
+        let ignored = coordinator.ignoredAssets
+        return categoryCard(
+            icon: "hand.raised",
+            title: "Ignored",
+            blurb: "Photos you chose to keep — never suggested again",
+            count: ignored.count,
+            countLabel: "\(ignored.count) photo\(ignored.count == 1 ? "" : "s")"
+        ) {
+            IgnoredAssetsScreen(
+                assets: ignored,
+                onRestore: { ids in Task { await coordinator.stopIgnoring(ids: ids) } }
             )
         }
     }

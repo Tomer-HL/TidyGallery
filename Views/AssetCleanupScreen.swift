@@ -17,6 +17,9 @@ struct AssetCleanupScreen: View {
     /// Called after a successful deletion so the coordinator can reconcile the
     /// home counts and other category screens immediately.
     var onDeleted: ([PhotoAsset.ID]) -> Void
+    /// Called when the user chooses to keep items permanently ("never suggest
+    /// these again"). `nil` hides the action.
+    var onIgnore: (([PhotoAsset.ID]) -> Void)?
 
     @State private var assets: [PhotoAsset]
     @Environment(\.photoLibrary) private var library
@@ -33,10 +36,12 @@ struct AssetCleanupScreen: View {
         category: CleanupCategory,
         assets: [PhotoAsset],
         initiallySelected: Set<PhotoAsset.ID> = [],
-        onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in }
+        onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in },
+        onIgnore: (([PhotoAsset.ID]) -> Void)? = nil
     ) {
         self.category = category
         self.onDeleted = onDeleted
+        self.onIgnore = onIgnore
         _assets = State(initialValue: assets)
         // Recommended cleanup pre-checks its items; other categories start empty.
         _selected = State(initialValue: initiallySelected.intersection(assets.map(\.id)))
@@ -136,28 +141,60 @@ struct AssetCleanupScreen: View {
 
     @ViewBuilder private var deleteBar: some View {
         if !selected.isEmpty {
-            Button {
-                showConfirm = true
-            } label: {
-                HStack(spacing: Theme.Spacing.s) {
-                    if isDeleting {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: "trash.fill")
-                    }
-                    Text(deleteButtonTitle).monospacedDigit()
-                }
-                .font(.headline)
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .background(Theme.Colors.destructive, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            VStack(spacing: Theme.Spacing.xs) {
+                keepButton
+                deleteButton
             }
-            .disabled(isDeleting)
             .padding(.horizontal, Theme.Spacing.l)
             .padding(.top, Theme.Spacing.s)
             .padding(.bottom, Theme.Spacing.xs)
             .background(.ultraThinMaterial)
         }
+    }
+
+    /// "Keep these" — the opposite of deleting: remember the decision so these
+    /// photos are never suggested again.
+    @ViewBuilder private var keepButton: some View {
+        if let onIgnore {
+            Button {
+                let ids = Array(selected)
+                let removed = Set(ids)
+                assets.removeAll { removed.contains($0.id) }
+                selected.removeAll()
+                onIgnore(ids)
+                Task { await flashBanner("Won't suggest \(ids.count) \(noun(ids.count)) again") }
+            } label: {
+                HStack(spacing: Theme.Spacing.s) {
+                    Image(systemName: "hand.raised.fill")
+                    Text("Keep \(selected.count) — don't suggest again")
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.Colors.accent)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(Theme.Colors.surfaceMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            }
+            .disabled(isDeleting)
+        }
+    }
+
+    @ViewBuilder private var deleteButton: some View {
+        Button {
+            showConfirm = true
+        } label: {
+            HStack(spacing: Theme.Spacing.s) {
+                if isDeleting {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "trash.fill")
+                }
+                Text(deleteButtonTitle).monospacedDigit()
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(Theme.Colors.destructive, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+        .disabled(isDeleting)
     }
 
     private var deleteButtonTitle: String {

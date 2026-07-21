@@ -92,7 +92,15 @@ final class LibraryScanCoordinator {
     private let library: PhotoLibraryService
     private let analyzer: ImageAnalyzer
     private let cache: AnalysisCacheStore
+    private let ignoreList: IgnoreListStore
     private let config: AnalysisConfiguration
+
+    /// Assets the user has said "never suggest this again" about. Loaded from
+    /// the ignore list at scan time and filtered out of every suggestion.
+    private(set) var ignoredIDs: Set<PhotoAsset.ID> = []
+
+    /// The ignored assets themselves, for the management screen.
+    private(set) var ignoredAssets: [PhotoAsset] = []
 
     /// Bounds how many images are decoded + analysed at once. Tuned low to keep
     /// peak memory and thermals in check on large libraries; raise cautiously.
@@ -115,12 +123,14 @@ final class LibraryScanCoordinator {
         library: PhotoLibraryService,
         analyzer: ImageAnalyzer,
         cache: AnalysisCacheStore,
+        ignoreList: IgnoreListStore,
         config: AnalysisConfiguration = .default,
         maxConcurrentAnalyses: Int = 4
     ) {
         self.library = library
         self.analyzer = analyzer
         self.cache = cache
+        self.ignoreList = ignoreList
         self.config = config
         self.maxConcurrentAnalyses = maxConcurrentAnalyses
     }
@@ -142,6 +152,10 @@ final class LibraryScanCoordinator {
         case .authorized, .limited:
             break   // `.limited` still works; we scan whatever we're allowed.
         }
+
+        // Load the user's "never suggest this again" decisions up front so every
+        // category built below can exclude them.
+        ignoredIDs = (try? await ignoreList.allIgnoredIDs()) ?? []
 
         var enriched: [PhotoAsset] = []
         var analysedCount = 0
@@ -242,18 +256,46 @@ final class LibraryScanCoordinator {
     /// the blurry-singles derivation from already-analysed assets; safe to call
     /// after a full scan and after each library delta.
     private func refreshCategories() {
-        screenshots = library.fetchScreenshots()
-        largeVideos = library.fetchVideos()
-        screenRecordings = library.fetchScreenRecordings()
-        bigFileCandidates = computeBigFiles()
-        blurryPhotos = deriveBlurrySingles()
+        // Every category is filtered through `suggestable`, so a photo the user
+        // chose to keep never reappears as a suggestion anywhere.
+        screenshots = suggestable(library.fetchScreenshots())
+        largeVideos = suggestable(library.fetchVideos())
+        screenRecordings = suggestable(library.fetchScreenRecordings())
+        bigFileCandidates = suggestable(computeBigFiles())
+        blurryPhotos = suggestable(deriveBlurrySingles())
         foodPhotos = photosTagged(.food)
         petPhotos = photosTagged(.pets)
         documentPhotos = photosTagged(.documents)
         naturePhotos = photosTagged(.nature)
         selfiePhotos = photosTagged(.selfies)
+        exactDuplicateExtras = suggestable(exactDuplicateExtras)
+        stripIgnoredFromStackPreselections()
         recommendedAssets = recommendedDeletions()
+        ignoredAssets = library.snapshots(for: Array(ignoredIDs))
         refreshStorageSummary()
+    }
+
+    /// Drops anything the user has chosen to keep.
+    private func suggestable(_ assets: [PhotoAsset]) -> [PhotoAsset] {
+        guard !ignoredIDs.isEmpty else { return assets }
+        return assets.filter { !ignoredIDs.contains($0.id) }
+    }
+
+    /// An ignored photo stays visible inside its duplicate stack (removing it
+    /// would make the group confusing), but is never pre-selected for deletion.
+    private func stripIgnoredFromStackPreselections() {
+        guard !ignoredIDs.isEmpty else { return }
+        stacks = stacks.map { stack in
+            let cleaned = stack.assetsPreselectedForDeletion.subtracting(ignoredIDs)
+            guard cleaned != stack.assetsPreselectedForDeletion else { return stack }
+            return PhotoStack(
+                id: stack.id,
+                assets: stack.assets,
+                bestShotID: stack.bestShotID,
+                rankedAssetIDs: stack.rankedAssetIDs,
+                assetsPreselectedForDeletion: cleaned
+            )
+        }
     }
 
     /// The engine's safe deletion suggestions, flattened into one list: the
@@ -265,7 +307,9 @@ final class LibraryScanCoordinator {
             stack.assets.filter { stack.assetsPreselectedForDeletion.contains($0.id) }
         }
         var seen = Set<PhotoAsset.ID>()
-        return (preselected + exactDuplicateExtras).filter { seen.insert($0.id).inserted }
+        let combined = (preselected + exactDuplicateExtras).filter { seen.insert($0.id).inserted }
+        // Belt-and-braces: an ignored photo must never be recommended.
+        return suggestable(combined)
     }
 
     /// Kick off the (heavy, off-main) library size measurement. One pass serves
@@ -299,7 +343,8 @@ final class LibraryScanCoordinator {
     ) {
         totalLibraryBytes = total
         exactDuplicateGroups = groups
-        exactDuplicateExtras = extras
+        // Respect "don't suggest again" for copies found by the background pass.
+        exactDuplicateExtras = suggestable(extras)
         recommendedAssets = recommendedDeletions()
         refreshStorageSummary()
     }
@@ -367,9 +412,11 @@ final class LibraryScanCoordinator {
     /// (never pre-selected); videos are excluded since classification runs on
     /// still images.
     private func photosTagged(_ category: SceneCategory) -> [PhotoAsset] {
-        analysedAssets
-            .filter { $0.mediaType == .image && $0.sceneTags.contains(category) }
-            .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        suggestable(
+            analysedAssets
+                .filter { $0.mediaType == .image && $0.sceneTags.contains(category) }
+                .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        )
     }
 
     /// Actual "big files": measures real on-disk size for the bounded candidate
@@ -461,6 +508,27 @@ final class LibraryScanCoordinator {
         recommendedAssets = recommendedDeletions()
         refreshStorageSummary()
         phase = .finished(stackCount: stacks.count)
+    }
+
+    // MARK: - Ignore list
+
+    /// Mark assets as "never suggest again". Persisted, then every published
+    /// list is refreshed so they disappear from suggestions immediately.
+    func ignore(ids: [PhotoAsset.ID]) async {
+        guard !ids.isEmpty else { return }
+        try? await ignoreList.ignore(ids: ids)
+        ignoredIDs.formUnion(ids)
+        refreshCategories()
+    }
+
+    /// Stop ignoring assets — they become eligible for suggestions again.
+    func stopIgnoring(ids: [PhotoAsset.ID]) async {
+        guard !ids.isEmpty else { return }
+        try? await ignoreList.unignore(ids: ids)
+        ignoredIDs.subtract(ids)
+        // The assets have to be re-derived from the library, so do a full pass.
+        stacks = buildStacks(from: analysedAssets)
+        refreshCategories()
     }
 
     /// Drop deleted assets from existing stacks without re-clustering. A stack
