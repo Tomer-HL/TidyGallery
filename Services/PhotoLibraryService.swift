@@ -29,6 +29,9 @@ struct AssetPage: Sendable {
     /// Zero-based index of this page within the overall enumeration.
     let pageIndex: Int
     let isLastPage: Bool
+    /// Total assets in the whole enumeration, so progress can be reported as
+    /// "x of y" from the very first page rather than counting up blindly.
+    let totalCount: Int
 }
 
 @MainActor
@@ -45,8 +48,29 @@ final class PhotoLibraryService {
 
     private let imageManager = PHCachingImageManager()
 
+    /// How much of the library to consider. Every fetch below honours this, so
+    /// narrowing the window genuinely reduces the work rather than just
+    /// reordering it.
+    var scope: ScanScope = .allTime
+
     init(pageSize: Int = 200) {
         self.pageSize = pageSize
+    }
+
+    /// Fetch options with the scope's date window applied.
+    ///
+    /// - Parameter newestFirst: analysis walks newest-first so the photos people
+    ///   most want to clean surface earliest in a progressive scan.
+    private func scopedOptions(newestFirst: Bool = true, sorted: Bool = true) -> PHFetchOptions {
+        let options = PHFetchOptions()
+        options.includeHiddenAssets = false
+        if sorted {
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: !newestFirst)]
+        }
+        if let cutoff = scope.cutoffDate() {
+            options.predicate = NSPredicate(format: "creationDate >= %@", cutoff as NSDate)
+        }
+        return options
     }
 
     // MARK: - Authorization
@@ -93,10 +117,9 @@ final class PhotoLibraryService {
     /// Only still images are enumerated (no videos) for Phase 1.
     func assetPages() -> AsyncStream<AssetPage> {
         AsyncStream { continuation in
-            let options = PHFetchOptions()
-            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-            options.includeHiddenAssets = false
-            let fetch = PHAsset.fetchAssets(with: .image, options: options)
+            // Newest first: in a progressive scan the most recent photos are the
+            // ones the user wants to act on soonest.
+            let fetch = PHAsset.fetchAssets(with: .image, options: self.scopedOptions())
 
             let total = fetch.count
             guard total > 0 else {
@@ -119,7 +142,14 @@ final class PhotoLibraryService {
                 }
 
                 let isLast = end >= total
-                continuation.yield(AssetPage(assets: page, pageIndex: pageIndex, isLastPage: isLast))
+                continuation.yield(
+                    AssetPage(
+                        assets: page,
+                        pageIndex: pageIndex,
+                        isLastPage: isLast,
+                        totalCount: total
+                    )
+                )
                 pageIndex += 1
                 start = end
             }
@@ -151,9 +181,7 @@ final class PhotoLibraryService {
         )
         guard let album = albums.firstObject else { return [] }
 
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let assets = PHAsset.fetchAssets(in: album, options: options)
+        let assets = PHAsset.fetchAssets(in: album, options: scopedOptions())
 
         var result: [PhotoAsset] = []
         result.reserveCapacity(assets.count)
@@ -167,10 +195,7 @@ final class PhotoLibraryService {
     /// carrying its `duration`). Ordering by real file size is done by the UI
     /// once sizes have been measured, since size isn't a fetchable sort key.
     func fetchVideos() -> [PhotoAsset] {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.includeHiddenAssets = false
-        let assets = PHAsset.fetchAssets(with: .video, options: options)
+        let assets = PHAsset.fetchAssets(with: .video, options: scopedOptions())
 
         var result: [PhotoAsset] = []
         result.reserveCapacity(assets.count)
@@ -186,10 +211,7 @@ final class PhotoLibraryService {
     /// the (not cheap) `PHAssetResource` lookup for each one again. Callers that
     /// need both should use this.
     func fetchVideosAndScreenRecordings() -> (videos: [PhotoAsset], recordings: [PhotoAsset]) {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.includeHiddenAssets = false
-        let assets = PHAsset.fetchAssets(with: .video, options: options)
+        let assets = PHAsset.fetchAssets(with: .video, options: scopedOptions())
 
         var videos: [PhotoAsset] = []
         var recordings: [PhotoAsset] = []
@@ -214,10 +236,7 @@ final class PhotoLibraryService {
     /// manually renamed won't be detected — acceptable: it just won't appear
     /// here, never a false deletion.)
     func fetchScreenRecordings() -> [PhotoAsset] {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.includeHiddenAssets = false
-        let assets = PHAsset.fetchAssets(with: .video, options: options)
+        let assets = PHAsset.fetchAssets(with: .video, options: scopedOptions())
 
         var result: [PhotoAsset] = []
         assets.enumerateObjects { asset, _, _ in
@@ -242,9 +261,7 @@ final class PhotoLibraryService {
     /// lazy enumeration advances, so peak memory stays bounded — then rank the
     /// (small) `PhotoAsset` snapshots by pixel area in memory.
     func fetchLargeFileCandidates(stillLimit: Int) -> [PhotoAsset] {
-        let options = PHFetchOptions()
-        options.includeHiddenAssets = false
-        let assets = PHAsset.fetchAssets(with: .image, options: options)
+        let assets = PHAsset.fetchAssets(with: .image, options: scopedOptions(sorted: false))
 
         var livePhotos: [PhotoAsset] = []
         var stills: [PhotoAsset] = []

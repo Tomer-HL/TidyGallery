@@ -230,6 +230,24 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 13 (scan scope + progressive results): the app no longer makes you wait
+for the whole library before showing anything.
+
+**Scope.** `ScanScope` (past month / 3 months / year / entire library, persisted)
+becomes a `creationDate` predicate applied to *every* fetch, so narrowing the
+window does proportionally less work rather than the same work reordered. This is
+the only lever that genuinely reduces analysis cost, because cost scales with
+photo count. Note it can't be done per content category: "only scan food" is
+circular, since classification is what identifies food in the first place.
+
+**Progressive results.** A scan now runs in two passes. Screenshots, videos,
+screen recordings and big files come from metadata alone — no Vision, no image
+loads — so they're published within a second or two and the home opens
+immediately. Vision analysis then runs behind it, newest-first, re-clustering
+early and then periodically so Duplicates and the content categories fill in
+while the user is already cleaning. A banner explains what's still arriving; the
+rest of the screen is live throughout.
+
 Phase 12 (explainability): long-press any photo — in a cleanup grid or a
 duplicate stack — for "Why this photo?". `ScoreBreakdownView` shows the metric
 bars the engine actually scored it on (sharpness, aesthetics, face quality) plus

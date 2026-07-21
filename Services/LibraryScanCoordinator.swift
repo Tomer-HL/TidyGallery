@@ -120,6 +120,34 @@ final class LibraryScanCoordinator {
     /// The ignored assets themselves, for the management screen.
     private(set) var ignoredAssets: [PhotoAsset] = []
 
+    /// Progress of the background analysis pass. `nil` when nothing is running.
+    struct ScanProgress: Sendable, Equatable {
+        var done: Int
+        var total: Int
+        var fraction: Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }
+    }
+
+    /// Non-`nil` while Vision analysis is still filling in duplicates and
+    /// content categories. The home is usable throughout.
+    private(set) var analysisProgress: ScanProgress?
+
+    /// How much of the library the current scan covers.
+    private(set) var scope: ScanScope = ScanScopeStore.load()
+
+    /// Photos processed so far in the current scan, and the scoped total.
+    private var scanProgress = 0
+    private var scanTotal = 0
+
+    /// Publishes analysis progress. Throttled to every `progressReportInterval`
+    /// photos: updating an `@Observable` property per photo would re-render the
+    /// UI thousands of times during a large scan.
+    private func reportProgress(force: Bool = false) {
+        guard force || scanProgress % progressReportInterval == 0 else { return }
+        analysisProgress = ScanProgress(done: scanProgress, total: scanTotal)
+    }
+
+    private let progressReportInterval = 10
+
     /// Bounds how many images are decoded + analysed at once. Tuned low to keep
     /// peak memory and thermals in check on large libraries; raise cautiously.
     private let maxConcurrentAnalyses: Int
@@ -172,35 +200,75 @@ final class LibraryScanCoordinator {
             break   // `.limited` still works; we scan whatever we're allowed.
         }
 
+        // Access is settled — move off "Requesting photo access…" immediately.
+        phase = .scanning(analysed: 0, total: 0)
+        library.scope = scope
+
         // Load the user's "never suggest this again" decisions up front so every
         // category built below can exclude them.
         ignoredIDs = (try? await ignoreList.allIgnoredIDs()) ?? []
 
-        var enriched: [PhotoAsset] = []
-        var analysedCount = 0
+        // STEP 1 — the fast pass. Screenshots, videos, screen recordings and big
+        // files come from metadata alone: no Vision, no per-photo image loads.
+        // Publishing these first means the home is usable within a second or two
+        // instead of after the whole library has been analysed.
+        analysedAssets = []
+        stacks = []
+        refreshCategories()
+        phase = .finished(stackCount: 0)
 
+        // STEP 2 — the slow pass, in the background. Duplicates and the content
+        // categories need Vision, so they fill in progressively while the user
+        // is already free to clean up the fast categories.
+        await runAnalysis()
+
+        startObserving()
+    }
+
+    /// Analyses the scoped library newest-first, publishing results as it goes
+    /// rather than only at the end.
+    private func runAnalysis() async {
+        scanProgress = 0
+        scanTotal = 0
+        analysisProgress = ScanProgress(done: 0, total: 0)
+        defer { analysisProgress = nil }
+
+        var enriched: [PhotoAsset] = []
         do {
             for await page in library.assetPages() {
-                let (pageAssets, newlyAnalysed) = try await process(page: page)
+                scanTotal = page.totalCount
+                let (pageAssets, _) = try await process(page: page)
                 enriched.append(contentsOf: pageAssets)
-                analysedCount += newlyAnalysed
-                phase = .scanning(analysed: enriched.count, total: enriched.count) // running tally
+                analysedAssets = enriched
+
+                // Re-derive often at the start (so something appears quickly),
+                // then periodically — re-clustering every page would grow costly
+                // as the working set builds up.
+                if page.pageIndex < 3 || page.pageIndex % 5 == 0 || page.isLastPage {
+                    stacks = buildStacks(from: analysedAssets)
+                    refreshDerivedCategories()
+                }
+                reportProgress(force: true)
             }
         } catch {
             phase = .failed(error.localizedDescription)
             return
         }
 
-        // Cluster + score.
-        phase = .clustering
         analysedAssets = enriched
-        let stacks = buildStacks(from: enriched)
-        self.stacks = stacks
-        refreshCategories()
+        stacks = buildStacks(from: enriched)
+        refreshDerivedCategories()
         measureTotalLibrarySize()
         phase = .finished(stackCount: stacks.count)
+    }
 
-        startObserving()
+    /// Change how much of the library is scanned, then rescan.
+    func rescan(scope newScope: ScanScope) async {
+        scope = newScope
+        ScanScopeStore.save(newScope)
+        analysedAssets = []
+        stacks = []
+        await scan()
     }
 
     // MARK: - Incremental updates
@@ -588,10 +656,12 @@ final class LibraryScanCoordinator {
                 enriched[i].featurePrint = hit.featurePrint
                 enriched[i].score = hit.score
                 enriched[i].sceneTags = hit.sceneTags
+                scanProgress += 1          // cache hits are progress too
             } else {
                 toAnalyse.append(i)
             }
         }
+        reportProgress(force: true)
 
         guard !toAnalyse.isEmpty else { return (enriched, 0) }
 
@@ -622,6 +692,8 @@ final class LibraryScanCoordinator {
 
             while let (index, result) = try await group.next() {
                 inFlight -= 1
+                scanProgress += 1
+                reportProgress()
                 if let result {
                     enriched[index].featurePrint = result.featurePrint
                     enriched[index].score = result.score

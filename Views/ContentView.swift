@@ -12,6 +12,7 @@ import UIKit
 
 struct ContentView: View {
     @State var coordinator: LibraryScanCoordinator
+    @State private var scope: ScanScope = ScanScopeStore.load()
 
     var body: some View {
         // The finished state is the category overview home (its own navigation);
@@ -32,8 +33,11 @@ struct ContentView: View {
             startState
         case .requestingAccess:
             progressState("Requesting photo access…")
-        case let .scanning(analysed, _):
-            progressState("Analysing your library…", detail: "\(analysed) photos scanned")
+        case let .scanning(analysed, total):
+            progressState(
+                "Analysing your library…",
+                detail: total > 0 ? "\(analysed) of \(total) photos" : "Getting started…"
+            )
         case .clustering:
             progressState("Grouping similar photos…")
         case .accessDenied:
@@ -67,8 +71,29 @@ struct ContentView: View {
                     .padding(.horizontal, Theme.Spacing.xl)
             }
             Spacer()
+
+            // Scope first: analysis cost scales with the number of photos, so
+            // choosing a window is the one thing that genuinely shortens a scan.
+            VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+                Text("How much should I scan?")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                Picker("Scan scope", selection: $scope) {
+                    ForEach(ScanScope.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(scope.detail)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .padding(.horizontal, Theme.Spacing.l)
+            .padding(.bottom, Theme.Spacing.m)
+
             Button {
-                Task { await coordinator.scan() }
+                ScanScopeStore.save(scope)
+                Task { await coordinator.rescan(scope: scope) }
             } label: {
                 Text("Scan my library")
                     .font(.headline)

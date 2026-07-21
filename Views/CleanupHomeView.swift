@@ -29,6 +29,7 @@ struct CleanupHomeView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: Theme.Spacing.m) {
+                    analysisBanner
                     summaryCard
 
                     sectionHeader("Reclaim space")
@@ -58,10 +59,28 @@ struct CleanupHomeView: View {
             .navigationTitle("Clean up")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
+                    Menu {
+                        Section("Rescan") {
+                            ForEach(ScanScope.allCases) { option in
+                                Button {
+                                    Task { await coordinator.rescan(scope: option) }
+                                } label: {
+                                    if option == coordinator.scope {
+                                        Label(option.label, systemImage: "checkmark")
+                                    } else {
+                                        Text(option.label)
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Label("Detection settings", systemImage: "slider.horizontal.3")
+                        }
                     } label: {
-                        Image(systemName: "slider.horizontal.3")
+                        Image(systemName: "ellipsis.circle")
                     }
                     .tint(Theme.Colors.accent)
                 }
@@ -91,6 +110,41 @@ struct CleanupHomeView: View {
                     .font(.headline)
                     .foregroundStyle(Theme.Colors.textPrimary)
             }
+        }
+    }
+
+    // MARK: Analysis banner
+
+    /// Shown while Vision analysis is still running. The categories above it are
+    /// already usable — this just explains why Duplicates and the content
+    /// categories are still filling in.
+    @ViewBuilder
+    private var analysisBanner: some View {
+        if let progress = coordinator.analysisProgress {
+            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                HStack(spacing: Theme.Spacing.s) {
+                    ProgressView().controlSize(.small).tint(Theme.Colors.accent)
+                    Text("Still looking for duplicates…")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    Spacer()
+                    if progress.total > 0 {
+                        Text("\(progress.done) of \(progress.total)")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                }
+                if progress.total > 0 {
+                    ProgressView(value: progress.fraction).tint(Theme.Colors.accent)
+                }
+                Text("Everything below is ready to use now.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .padding(Theme.Spacing.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.Colors.surfaceMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 
