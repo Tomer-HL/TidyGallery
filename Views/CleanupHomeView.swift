@@ -19,6 +19,7 @@ struct CleanupHomeView: View {
     private let colorDuplicates = Theme.Colors.accent
     private let colorVideos = Theme.Colors.best
     private let colorBigFiles = Theme.Colors.destructive
+    private let colorScreenshots = Color.purple
     private let colorRecordings = Color.teal
 
     var body: some View {
@@ -75,9 +76,10 @@ struct CleanupHomeView: View {
 
             if summary.hasReclaimableSpace {
                 VStack(spacing: Theme.Spacing.xs) {
-                    breakdownRow("Duplicates", summary.duplicates, colorDuplicates)
+                    breakdownRow("Duplicate extras", summary.duplicates, colorDuplicates)
                     breakdownRow("Large videos", summary.largeVideos, colorVideos)
                     breakdownRow("Big files", summary.bigFiles, colorBigFiles)
+                    breakdownRow("Screenshots", summary.screenshots, colorScreenshots)
                     breakdownRow("Screen recordings", summary.screenRecordings, colorRecordings)
                 }
             }

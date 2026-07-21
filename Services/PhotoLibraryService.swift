@@ -375,6 +375,32 @@ final class PhotoLibraryService {
         return sizes
     }
 
+    /// Off-main variant of `fileSizes(for:)` for large id sets.
+    ///
+    /// The dashboard summary measures every duplicate extra, screenshot, video,
+    /// big file and recording, which can be thousands of assets — far too many to
+    /// walk on the main actor without a visible hitch. The Photos read APIs used
+    /// here are thread-safe, so this runs off the main actor and the coordinator
+    /// awaits it from a background task.
+    nonisolated func assetFileSizes(for identifiers: [String]) async -> [String: Int64] {
+        guard !identifiers.isEmpty else { return [:] }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+
+        var sizes: [String: Int64] = [:]
+        fetched.enumerateObjects { asset, _, _ in
+            var total: Int64 = 0
+            var found = false
+            for resource in PHAssetResource.assetResources(for: asset) {
+                if let number = resource.value(forKey: "fileSize") as? NSNumber {
+                    total += number.int64Value
+                    found = true
+                }
+            }
+            if found { sizes[asset.localIdentifier] = total }
+        }
+        return sizes
+    }
+
     /// Total on-disk size of the whole library (photos + videos), for the
     /// dashboard's "of X used" reference figure.
     ///

@@ -214,10 +214,16 @@ back to in-memory) rather than crashing on launch. The classifier runs on still
 images only; these categories are surfacing-only, like the rest.
 
 Phase 5 (storage dashboard): the home now opens with a summary card showing how
-much space is reclaimable (`StorageSummary`, computed by the coordinator by
-measuring real on-disk sizes for the bounded space-heavy sets — pre-selected
-duplicates, videos, big files, recordings — de-duplicated so an asset in two
-categories isn't summed twice), with a per-category byte breakdown. Below it the
+much space is reclaimable (`StorageSummary`), with a per-category byte breakdown.
+It covers **duplicate extras, large videos, big files, screenshots, and screen
+recordings**, de-duplicated so an asset in two categories isn't summed twice.
+Two deliberate choices: duplicates count their *potential* saving (everything
+except each group's best shot) to match the card's "up to X" framing — the much
+smaller conservative pre-selected subset is what "Recommended cleanup" acts on —
+and because that id set now runs to thousands of assets (every screenshot and
+duplicate extra), the sizes are measured **off the main actor**
+(`PhotoLibraryService.assetFileSizes`, `nonisolated`) from a cancellable
+background task, so the UI never hitches while it recomputes. Below it the
 categories are grouped into sections: **Reclaim space** (Duplicates, Large
 videos, Big files, Screen recordings), **Clutter** (Screenshots, Possibly
 blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summary

@@ -30,6 +30,7 @@ struct StorageRingView: View {
         add("Duplicates", summary.duplicates, Theme.Colors.accent)
         add("Large videos", summary.largeVideos, Theme.Colors.best)
         add("Big files", summary.bigFiles, Theme.Colors.destructive)
+        add("Screenshots", summary.screenshots, .purple)
         add("Screen recordings", summary.screenRecordings, .teal)
 
         if let total = totalLibraryBytes {

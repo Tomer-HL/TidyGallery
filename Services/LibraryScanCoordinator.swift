@@ -76,6 +76,9 @@ final class LibraryScanCoordinator {
     /// Background task computing `totalLibraryBytes`.
     private var totalSizeTask: Task<Void, Never>?
 
+    /// Background task computing `storageSummary` (sizes measured off-main).
+    private var summaryTask: Task<Void, Never>?
+
     // MARK: Collaborators
 
     private let library: PhotoLibraryService
@@ -242,7 +245,7 @@ final class LibraryScanCoordinator {
         naturePhotos = photosTagged(.nature)
         selfiePhotos = photosTagged(.selfies)
         recommendedAssets = recommendedDeletions()
-        storageSummary = computeStorageSummary()
+        refreshStorageSummary()
     }
 
     /// The pre-selected near-duplicate photos across all stacks (the engine's
@@ -264,34 +267,60 @@ final class LibraryScanCoordinator {
         }
     }
 
-    /// Measures reclaimable space across the size-heavy categories in one bounded
-    /// pass. The categories are small (pre-selected duplicates, videos, ≤100 big
-    /// files, recordings), so measuring their real on-disk sizes here is cheap.
-    /// The total de-duplicates ids so an asset in two categories isn't summed twice.
-    private func computeStorageSummary() -> StorageSummary {
-        let duplicateIDs = Set(stacks.flatMap { $0.assetsPreselectedForDeletion })
+    /// Recomputes the dashboard's reclaimable-space breakdown.
+    ///
+    /// Ids are gathered on the main actor (cheap), then the real on-disk sizes
+    /// are measured **off** the main actor — this set now includes every
+    /// screenshot and every duplicate extra, which can run to thousands of
+    /// assets, far too many to walk on the main thread without a visible hitch.
+    ///
+    /// Duplicates are counted as their *potential* saving (everything except each
+    /// group's best shot) to match the card's "up to X" framing. The conservative
+    /// pre-selected subset remains what "Recommended cleanup" acts on.
+    private func refreshStorageSummary() {
+        let duplicateIDs = Set(stacks.flatMap { stack in
+            stack.assets.map(\.id).filter { $0 != stack.bestShotID }
+        })
         let videoIDs = largeVideos.map(\.id)
         let bigFileIDs = bigFileCandidates.map(\.id)
         let recordingIDs = screenRecordings.map(\.id)
+        let screenshotIDs = screenshots.map(\.id)
 
         let unionIDs = duplicateIDs
             .union(videoIDs)
             .union(bigFileIDs)
             .union(recordingIDs)
-        guard !unionIDs.isEmpty else { return .empty }
+            .union(screenshotIDs)
 
-        let sizes = library.fileSizes(for: Array(unionIDs))
-        func bytes<S: Sequence>(_ ids: S) -> Int64 where S.Element == String {
-            ids.reduce(0) { $0 + (sizes[$1] ?? 0) }
+        guard !unionIDs.isEmpty else {
+            summaryTask?.cancel()
+            storageSummary = .empty
+            return
         }
 
-        return StorageSummary(
-            reclaimableBytes: bytes(unionIDs),
-            duplicates: .init(count: duplicateIDs.count, bytes: bytes(duplicateIDs)),
-            largeVideos: .init(count: largeVideos.count, bytes: bytes(videoIDs)),
-            bigFiles: .init(count: bigFileCandidates.count, bytes: bytes(bigFileIDs)),
-            screenRecordings: .init(count: screenRecordings.count, bytes: bytes(recordingIDs))
-        )
+        let videoCount = largeVideos.count
+        let bigFileCount = bigFileCandidates.count
+        let recordingCount = screenRecordings.count
+        let screenshotCount = screenshots.count
+
+        summaryTask?.cancel()
+        summaryTask = Task { [weak self, library] in
+            let sizes = await library.assetFileSizes(for: Array(unionIDs))
+            guard !Task.isCancelled else { return }
+
+            func bytes<S: Sequence>(_ ids: S) -> Int64 where S.Element == String {
+                ids.reduce(0) { $0 + (sizes[$1] ?? 0) }
+            }
+
+            self?.storageSummary = StorageSummary(
+                reclaimableBytes: bytes(unionIDs),
+                duplicates: .init(count: duplicateIDs.count, bytes: bytes(duplicateIDs)),
+                largeVideos: .init(count: videoCount, bytes: bytes(videoIDs)),
+                bigFiles: .init(count: bigFileCount, bytes: bytes(bigFileIDs)),
+                screenRecordings: .init(count: recordingCount, bytes: bytes(recordingIDs)),
+                screenshots: .init(count: screenshotCount, bytes: bytes(screenshotIDs))
+            )
+        }
     }
 
     /// Analysed stills carrying a given content tag, newest first. Surfacing-only
@@ -386,7 +415,7 @@ final class LibraryScanCoordinator {
         selfiePhotos.removeAll { removed.contains($0.id) }
         pruneStacks(removing: removed)
         recommendedAssets = recommendedDeletions()
-        storageSummary = computeStorageSummary()
+        refreshStorageSummary()
         phase = .finished(stackCount: stacks.count)
     }
 
