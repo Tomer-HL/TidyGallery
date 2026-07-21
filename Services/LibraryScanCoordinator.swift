@@ -328,6 +328,7 @@ final class LibraryScanCoordinator {
                     asset.featurePrint = hit.featurePrint
                     asset.score = hit.score
                     asset.sceneTags = hit.sceneTags
+                    asset.classificationLabels = hit.labels
                 } else {
                     let imageResult = await library.analysisImage(
                         for: asset.id,
@@ -341,12 +342,14 @@ final class LibraryScanCoordinator {
                         asset.featurePrint = result.featurePrint
                         asset.score = result.score
                         asset.sceneTags = result.sceneTags
+                        asset.classificationLabels = result.labels
                         try? await cache.store(
                             id: asset.id,
                             modificationDate: asset.modificationDate,
                             featurePrint: result.featurePrint,
                             score: result.score,
-                            sceneTags: result.sceneTags
+                            sceneTags: result.sceneTags,
+                            labels: result.labels
                         )
                     }
                 }
@@ -689,6 +692,7 @@ final class LibraryScanCoordinator {
                 enriched[i].featurePrint = hit.featurePrint
                 enriched[i].score = hit.score
                 enriched[i].sceneTags = hit.sceneTags
+                enriched[i].classificationLabels = hit.labels
                 scanProgress += 1          // cache hits are progress too
             } else {
                 toAnalyse.append(i)
@@ -752,6 +756,7 @@ final class LibraryScanCoordinator {
                     enriched[index].featurePrint = result.featurePrint
                     enriched[index].score = result.score
                     enriched[index].sceneTags = result.sceneTags
+                    enriched[index].classificationLabels = result.labels
                     freshlyAnalysed += 1
                     // 3. Collect for a single batched write below — persisting
                     // per photo meant a disk write for every image in the library.
@@ -762,7 +767,8 @@ final class LibraryScanCoordinator {
                             modificationDate: asset.modificationDate,
                             featurePrint: result.featurePrint,
                             score: result.score,
-                            sceneTags: result.sceneTags
+                            sceneTags: result.sceneTags,
+                            labels: result.labels
                         )
                     )
                 }

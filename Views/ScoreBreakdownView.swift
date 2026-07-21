@@ -21,6 +21,9 @@ struct ScoreBreakdownView: View {
     /// isn't the winner. `nil` for standalone categories.
     var bestShotScore: ShotScore?
     var isBestShot: Bool = false
+    /// The classifier's labels for this photo, shown so a miscategorisation is
+    /// self-explanatory.
+    var labels: [ClassificationLabel] = []
     let config: AnalysisConfiguration
 
     @Environment(\.dismiss) private var dismiss
@@ -54,6 +57,24 @@ struct ScoreBreakdownView: View {
                 Section("How it scored") {
                     ForEach(ScoreExplanation.metrics(for: score)) { metric in
                         metricRow(metric)
+                    }
+                }
+
+                if !labels.isEmpty {
+                    Section {
+                        ForEach(labels) { label in
+                            HStack {
+                                Text(label.displayName)
+                                Spacer()
+                                Text("\(Int((label.confidence * 100).rounded()))%")
+                                    .monospacedDigit()
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                        }
+                    } header: {
+                        Text("Detected on-device")
+                    } footer: {
+                        Text("What Apple's image classifier saw. These drive the content categories (Food, Pets, …). If a photo is in the wrong category, this shows why.")
                     }
                 }
 

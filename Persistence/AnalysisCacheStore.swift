@@ -46,7 +46,8 @@ actor AnalysisCacheStore {
             result[row.localIdentifier] = AnalyzedImage(
                 featurePrint: print,
                 score: score,
-                sceneTags: row.decodedSceneTags()
+                sceneTags: row.decodedSceneTags(),
+                labels: row.decodedLabels()
             )
         }
         return result
@@ -59,6 +60,7 @@ actor AnalysisCacheStore {
         let featurePrint: FeaturePrint
         let score: ShotScore
         let sceneTags: Set<SceneCategory>
+        let labels: [ClassificationLabel]
     }
 
     /// Upsert a whole page of results in **one** transaction.
@@ -86,7 +88,8 @@ actor AnalysisCacheStore {
                     modificationDate: entry.modificationDate,
                     featurePrint: entry.featurePrint,
                     score: entry.score,
-                    sceneTags: entry.sceneTags
+                    sceneTags: entry.sceneTags,
+                    labels: entry.labels
                 )
             )
         }
@@ -99,7 +102,8 @@ actor AnalysisCacheStore {
         modificationDate: Date?,
         featurePrint: FeaturePrint,
         score: ShotScore,
-        sceneTags: Set<SceneCategory>
+        sceneTags: Set<SceneCategory>,
+        labels: [ClassificationLabel]
     ) throws {
         // Remove a stale row if present, then insert fresh.
         let descriptor = FetchDescriptor<CachedAnalysis>(
@@ -113,7 +117,8 @@ actor AnalysisCacheStore {
             modificationDate: modificationDate,
             featurePrint: featurePrint,
             score: score,
-            sceneTags: sceneTags
+            sceneTags: sceneTags,
+            labels: labels
         )
         modelContext.insert(row)
         try modelContext.save()

@@ -181,6 +181,7 @@ struct ReviewScreen: View {
                 score: score,
                 bestShotScore: isBest ? nil : stack.asset(stack.bestShotID)?.score,
                 isBestShot: isBest,
+                labels: asset.classificationLabels,
                 config: .default
             )
         }

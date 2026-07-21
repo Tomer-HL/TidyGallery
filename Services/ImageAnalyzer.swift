@@ -34,6 +34,8 @@ struct AnalyzedImage: Sendable {
     let score: ShotScore
     /// On-device content categories (food, pets, documents…). May be empty.
     var sceneTags: Set<SceneCategory> = []
+    /// The classifier's strongest labels, kept for the "Why this photo?" sheet.
+    var labels: [ClassificationLabel] = []
 }
 
 /// On-device image analysis. Reusable across the whole scan.
@@ -95,10 +97,13 @@ actor ImageAnalyzer {
         // On-device aesthetics via the newer async Vision request (best-effort).
         let aesthetics = await Self.aestheticsScore(for: image)
 
-        // Content categories from the classification results gathered above.
-        var sceneTags = classificationSucceeded
-            ? sceneCategories(from: classifyRequest.results ?? [])
+        // The strongest labels drive both the category tags and the "Why this
+        // photo?" sheet, so compute them once.
+        let topLabels = classificationSucceeded
+            ? topClassificationLabels(from: classifyRequest.results ?? [])
             : []
+
+        var sceneTags = SceneCategory.categories(forIdentifiers: topLabels.map(\.identifier))
 
         // A document doesn't contain a person's face. A detected face is a far
         // more reliable signal than a weak "page"/"paper" label, so it vetoes
@@ -114,27 +119,32 @@ actor ImageAnalyzer {
             faceQuality: faceQuality,
             isFavorite: isFavorite
         )
-        return AnalyzedImage(featurePrint: print, score: score, sceneTags: sceneTags)
+        return AnalyzedImage(
+            featurePrint: print,
+            score: score,
+            sceneTags: sceneTags,
+            labels: topLabels
+        )
     }
 
     // MARK: - Scene classification (content categories)
 
-    /// Runs Vision's on-device image classifier and folds the confident labels
-    /// into our high-level `SceneCategory` set. Best-effort and isolated in its
-    /// own request handler so a classification failure never affects the required
-    /// feature print. Returns an empty set on any failure.
-    private func sceneCategories(
+    /// The classifier's strongest labels above the confidence floor. These both
+    /// drive category matching and are shown verbatim in the breakdown sheet.
+    ///
+    /// Best-effort and isolated in its own request handler so a classification
+    /// failure never affects the required feature print.
+    private func topClassificationLabels(
         from observations: [VNClassificationObservation]
-    ) -> Set<SceneCategory> {
+    ) -> [ClassificationLabel] {
         // Take the strongest few labels above a low floor rather than applying a
         // high absolute confidence gate: this classifier spreads confidence
         // across a very large taxonomy, so correct labels often score low.
-        let confidentIdentifiers = observations
+        observations
             .filter { $0.confidence >= config.sceneClassificationMinConfidence }
             .sorted { $0.confidence > $1.confidence }
             .prefix(config.sceneClassificationTopLabels)
-            .map(\.identifier)
-        return SceneCategory.categories(forIdentifiers: Array(confidentIdentifiers))
+            .map { ClassificationLabel(identifier: $0.identifier, confidence: $0.confidence) }
     }
 
 

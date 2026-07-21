@@ -29,7 +29,8 @@ final class CachedAnalysis {
     ///        much wider keyword map, so scene tags must be recomputed
     ///   v5 → tightened confidence + pruned keywords, face veto on Documents,
     ///        and selfies moved to the system smart album
-    static let currentSchemaVersion = 5
+    ///   v6 → stores the classifier's top labels (for the "Why this photo?" sheet)
+    static let currentSchemaVersion = 6
 
     /// `PHAsset.localIdentifier`. Unique so we can upsert by identity.
     @Attribute(.unique) var localIdentifier: String
@@ -48,6 +49,9 @@ final class CachedAnalysis {
     /// `nil` rows are older-version and will be re-analysed.
     var sceneTagsData: Data?
 
+    /// JSON-encoded `[ClassificationLabel]`. Optional for clean migration.
+    var labelsData: Data?
+
     /// Which pipeline version produced this row (see `currentSchemaVersion`).
     /// Defaulted so pre-existing rows migrate to 0 and are refreshed.
     var schemaVersion: Int = 0
@@ -61,6 +65,7 @@ final class CachedAnalysis {
         featurePrintData: Data,
         scoreData: Data,
         sceneTagsData: Data?,
+        labelsData: Data?,
         schemaVersion: Int,
         updatedAt: Date = .now
     ) {
@@ -69,6 +74,7 @@ final class CachedAnalysis {
         self.featurePrintData = featurePrintData
         self.scoreData = scoreData
         self.sceneTagsData = sceneTagsData
+        self.labelsData = labelsData
         self.schemaVersion = schemaVersion
         self.updatedAt = updatedAt
     }
@@ -84,7 +90,8 @@ extension CachedAnalysis {
         modificationDate: Date?,
         featurePrint: FeaturePrint,
         score: ShotScore,
-        sceneTags: Set<SceneCategory>
+        sceneTags: Set<SceneCategory>,
+        labels: [ClassificationLabel]
     ) throws -> CachedAnalysis {
         let encoder = JSONEncoder()
         return CachedAnalysis(
@@ -93,6 +100,7 @@ extension CachedAnalysis {
             featurePrintData: try encoder.encode(featurePrint),
             scoreData: try encoder.encode(score),
             sceneTagsData: try encoder.encode(Array(sceneTags)),
+            labelsData: try encoder.encode(labels),
             schemaVersion: currentSchemaVersion
         )
     }
@@ -113,6 +121,14 @@ extension CachedAnalysis {
               let array = try? JSONDecoder().decode([SceneCategory].self, from: sceneTagsData)
         else { return [] }
         return Set(array)
+    }
+
+    /// Decode the stored classifier labels (empty when absent or corrupt).
+    func decodedLabels() -> [ClassificationLabel] {
+        guard let labelsData,
+              let labels = try? JSONDecoder().decode([ClassificationLabel].self, from: labelsData)
+        else { return [] }
+        return labels
     }
 
     /// Whether this cached row is still valid for an asset with the given

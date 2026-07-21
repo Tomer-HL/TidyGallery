@@ -125,7 +125,11 @@ struct AssetCleanupScreen: View {
         .overlay(alignment: .top) { bannerView }
         .sheet(item: $explaining) { asset in
             if let score = asset.score {
-                ScoreBreakdownView(score: score, config: .default)
+                ScoreBreakdownView(
+                    score: score,
+                    labels: asset.classificationLabels,
+                    config: .default
+                )
             }
         }
     }

@@ -65,6 +65,10 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
     /// classifier. Empty until analysed, or when nothing recognisable is found.
     var sceneTags: Set<SceneCategory> = []
 
+    /// The classifier's strongest labels, for the "Why this photo?" sheet. Not
+    /// part of identity or equality — purely diagnostic.
+    var classificationLabels: [ClassificationLabel] = []
+
     /// Memberwise-style init that still accepts a `CLLocationCoordinate2D` at the
     /// call site (convenient when snapshotting a `PHAsset`) but stores only
     /// primitives internally.

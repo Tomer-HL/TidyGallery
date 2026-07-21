@@ -230,6 +230,16 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 16 (self-diagnosing categories): after several rounds of *guessing* what
+Vision labelled a photo and rebuilding to check, the classifier's top labels are
+now kept (`ClassificationLabel`, persisted with the analysis, schema v6) and
+shown in a "Detected on-device" section of the "Why this photo?" sheet —
+"Child 42%, Cat 17%, Sofa 11%". A miscategorisation is now self-explanatory:
+long-press the photo, read the labels, and the fix is obvious (adjust a keyword,
+raise the confidence floor) without a build-and-sideload round-trip. The labels
+are computed once during analysis anyway — the same ranked list that drives the
+category tags — so this adds a cache field, not analysis cost.
+
 Phase 15 (classification accuracy): real-device testing surfaced three
 misclassifications, each with a different cause.
 
