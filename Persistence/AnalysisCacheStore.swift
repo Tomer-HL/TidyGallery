@@ -78,6 +78,16 @@ actor AnalysisCacheStore {
         try modelContext.save()
     }
 
+    /// Discard the entire cache. Used when analysis settings change, since every
+    /// stored result was produced under the previous settings. The cache is a
+    /// pure optimisation, so this only costs a re-scan — never user data.
+    func purgeAll() throws {
+        for row in try modelContext.fetch(FetchDescriptor<CachedAnalysis>()) {
+            modelContext.delete(row)
+        }
+        try modelContext.save()
+    }
+
     /// Delete cache rows for assets that no longer exist in the library.
     /// Called when the change observer reports deletions, to keep the cache
     /// from growing unbounded.

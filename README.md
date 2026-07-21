@@ -230,6 +230,20 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 9 (on-device tuning): a Settings screen (gear on the home) exposes the
+detection knobs as sliders — duplicate sensitivity, "possibly blurry" share,
+big-file floor, content-detection confidence and selfie sensitivity — so they can
+be tuned on the phone instead of editing a constant, running CI and re-sideloading.
+
+Two details matter. First, only the user-facing subset is persisted
+(`TuningSettings` in `UserDefaults`, decoded tolerantly with `decodeIfPresent`)
+rather than all of `AnalysisConfiguration`, so adding internal tunables later
+can't silently reset the user's choices. Second, the screen distinguishes knobs
+applied while *deriving* categories — which re-apply instantly by re-clustering
+the working set already in memory — from the two applied during *analysis*
+(scene confidence, selfie face size), which are baked into cached results and so
+discard the cache and re-scan. The screen says which is which before you apply.
+
 Phase 8 (organise): every cleanup grid gains a toolbar menu with **sort**
 (newest / oldest / largest / smallest — size orders fall back to date until the
 measurement lands, so the grid never looks shuffled) and an **age filter** (past

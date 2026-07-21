@@ -93,7 +93,16 @@ final class LibraryScanCoordinator {
     private let analyzer: ImageAnalyzer
     private let cache: AnalysisCacheStore
     private let ignoreList: IgnoreListStore
-    private let config: AnalysisConfiguration
+
+    /// Live analysis configuration. Mutable so the Settings screen can retune
+    /// detection without a rebuild.
+    private(set) var config: AnalysisConfiguration
+
+    /// The user-facing subset of `config`, as chosen in Settings.
+    private(set) var tuning: TuningSettings
+
+    /// True while a settings change is being applied (may involve a re-scan).
+    private(set) var isRetuning = false
 
     /// Assets the user has said "never suggest this again" about. Loaded from
     /// the ignore list at scan time and filtered out of every suggestion.
@@ -124,14 +133,15 @@ final class LibraryScanCoordinator {
         analyzer: ImageAnalyzer,
         cache: AnalysisCacheStore,
         ignoreList: IgnoreListStore,
-        config: AnalysisConfiguration = .default,
+        tuning: TuningSettings = TuningStore.load(),
         maxConcurrentAnalyses: Int = 4
     ) {
         self.library = library
         self.analyzer = analyzer
         self.cache = cache
         self.ignoreList = ignoreList
-        self.config = config
+        self.tuning = tuning
+        self.config = tuning.applied()
         self.maxConcurrentAnalyses = maxConcurrentAnalyses
     }
 
@@ -508,6 +518,39 @@ final class LibraryScanCoordinator {
         recommendedAssets = recommendedDeletions()
         refreshStorageSummary()
         phase = .finished(stackCount: stacks.count)
+    }
+
+    // MARK: - Retuning
+
+    /// Adopt new detection settings from the Settings screen.
+    ///
+    /// Most knobs (duplicate similarity, blurry sensitivity, big-file floor) are
+    /// applied while *deriving* categories, so they take effect immediately by
+    /// re-clustering the working set already in memory — no re-analysis, no
+    /// waiting. The two analysis-time knobs (scene confidence, selfie face size)
+    /// are baked into cached results, so changing those discards the cache and
+    /// re-scans.
+    func applyTuning(_ newTuning: TuningSettings) async {
+        guard newTuning != tuning else { return }
+        let needsReanalysis = newTuning.requiresReanalysis(comparedTo: tuning)
+
+        isRetuning = true
+        defer { isRetuning = false }
+
+        tuning = newTuning
+        config = newTuning.applied()
+        TuningStore.save(newTuning)
+        await analyzer.updateConfiguration(config)
+
+        if needsReanalysis {
+            try? await cache.purgeAll()
+            analysedAssets = []
+            await scan()
+        } else {
+            stacks = buildStacks(from: analysedAssets)
+            refreshCategories()
+            phase = .finished(stackCount: stacks.count)
+        }
     }
 
     // MARK: - Ignore list

@@ -43,10 +43,17 @@ actor ImageAnalyzer {
         case featurePrintUnavailable
     }
 
-    private let config: AnalysisConfiguration
+    private var config: AnalysisConfiguration
 
     init(config: AnalysisConfiguration = .default) {
         self.config = config
+    }
+
+    /// Adopt new analysis settings (from the Settings screen). The caller is
+    /// responsible for discarding cached analysis, since results already stored
+    /// were produced under the old settings.
+    func updateConfiguration(_ newConfig: AnalysisConfiguration) {
+        config = newConfig
     }
 
     /// Analyse a single image. `isFavorite` is threaded in from the asset

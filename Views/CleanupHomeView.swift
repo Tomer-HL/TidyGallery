@@ -15,6 +15,8 @@ import SwiftUI
 struct CleanupHomeView: View {
     let coordinator: LibraryScanCoordinator
 
+    @State private var showSettings = false
+
     // Colours shared by the ring segments and the breakdown legend.
     private let colorExactDuplicates = Color.green
     private let colorDuplicates = Theme.Colors.accent
@@ -54,8 +56,42 @@ struct CleanupHomeView: View {
             }
             .background(Theme.Colors.background.ignoresSafeArea())
             .navigationTitle("Clean up")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .tint(Theme.Colors.accent)
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsScreen(current: coordinator.tuning) { newTuning in
+                    Task { await coordinator.applyTuning(newTuning) }
+                }
+            }
+            .overlay {
+                if coordinator.isRetuning {
+                    retuningOverlay
+                }
+            }
         }
         .tint(Theme.Colors.accent)
+    }
+
+    /// Shown while new detection settings are being applied (which may involve
+    /// a full re-scan).
+    private var retuningOverlay: some View {
+        ZStack {
+            Theme.Colors.background.opacity(0.85).ignoresSafeArea()
+            VStack(spacing: Theme.Spacing.m) {
+                ProgressView().controlSize(.large).tint(Theme.Colors.accent)
+                Text("Applying new settings…")
+                    .font(.headline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+            }
+        }
     }
 
     // MARK: Summary card

@@ -38,11 +38,15 @@ struct TidyGalleryApp: App {
 
         let cache = AnalysisCacheStore(modelContainer: container)
         let ignoreList = IgnoreListStore(modelContainer: container)
+
+        // Detection settings the user has tuned in-app (defaults on first run).
+        let tuning = TuningStore.load()
         let coordinator = LibraryScanCoordinator(
             library: library,
-            analyzer: ImageAnalyzer(),
+            analyzer: ImageAnalyzer(config: tuning.applied()),
             cache: cache,
-            ignoreList: ignoreList
+            ignoreList: ignoreList,
+            tuning: tuning
         )
         _coordinator = State(initialValue: coordinator)
     }
