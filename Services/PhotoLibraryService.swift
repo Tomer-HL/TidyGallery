@@ -23,6 +23,20 @@ enum PhotoAccess: Sendable, Equatable {
     case notDetermined
 }
 
+/// Outcome of trying to load an image for analysis.
+///
+/// Declared at file scope, like `PhotoAccess` and `AssetPage`: nesting it inside
+/// the `@MainActor` service would make it main-actor isolated too, and it has to
+/// be matched inside the nonisolated analysis task group.
+enum AnalysisImage: Sendable {
+    case image(CGImage)
+    /// The asset lives only in iCloud and network access wasn't permitted.
+    /// Deliberately distinct from a plain failure so the user can be told, and
+    /// offered the choice to download.
+    case inCloud
+    case unavailable
+}
+
 /// A page of snapshotted assets plus the source thumbnails' target size.
 struct AssetPage: Sendable {
     let assets: [PhotoAsset]
@@ -308,16 +322,6 @@ final class PhotoLibraryService {
     }
 
     // MARK: - Pixel loading (for the analyzer)
-
-    /// Outcome of trying to load an image for analysis.
-    enum AnalysisImage: Sendable {
-        case image(CGImage)
-        /// The asset lives only in iCloud and network access wasn't permitted.
-        /// Deliberately distinct from a plain failure so the user can be told,
-        /// and offered the choice to download.
-        case inCloud
-        case unavailable
-    }
 
     /// Loads a downscaled `CGImage` for analysis by identifier. Re-resolves the
     /// live `PHAsset` here (on the main actor) so no `PHAsset` ever crosses an

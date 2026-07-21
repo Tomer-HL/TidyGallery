@@ -14,6 +14,18 @@
 import Foundation
 import Observation
 
+/// One analysed photo's outcome, including whether it was skipped because it
+/// lives only in iCloud.
+///
+/// File scope on purpose: it's produced inside the nonisolated analysis task
+/// group, and nesting it in the `@MainActor` coordinator would make it
+/// main-actor isolated too.
+private struct PageResult: Sendable {
+    let index: Int
+    let analysis: AnalyzedImage?
+    let wasInCloud: Bool
+}
+
 @MainActor
 @Observable
 final class LibraryScanCoordinator {
@@ -130,14 +142,6 @@ final class LibraryScanCoordinator {
     /// Non-`nil` while Vision analysis is still filling in duplicates and
     /// content categories. The home is usable throughout.
     private(set) var analysisProgress: ScanProgress?
-
-    /// One analysed photo's outcome, including whether it was skipped because it
-    /// lives only in iCloud.
-    private struct PageResult: Sendable {
-        let index: Int
-        let analysis: AnalyzedImage?
-        let wasInCloud: Bool
-    }
 
     /// How many photos this scan couldn't analyse because they're stored in
     /// iCloud and downloading wasn't permitted. Surfaced to the user rather than
@@ -323,21 +327,27 @@ final class LibraryScanCoordinator {
                     asset.featurePrint = hit.featurePrint
                     asset.score = hit.score
                     asset.sceneTags = hit.sceneTags
-                } else if case let .image(cgImage) = await library.analysisImage(
-                              for: asset.id,
-                              allowNetwork: tuning.analyseICloudPhotos
-                          ),
-                          let result = try? await analyzer.analyze(image: cgImage, isFavorite: asset.isFavorite) {
-                    asset.featurePrint = result.featurePrint
-                    asset.score = result.score
-                    asset.sceneTags = result.sceneTags
-                    try? await cache.store(
-                        id: asset.id,
-                        modificationDate: asset.modificationDate,
-                        featurePrint: result.featurePrint,
-                        score: result.score,
-                        sceneTags: result.sceneTags
+                } else {
+                    let imageResult = await library.analysisImage(
+                        for: asset.id,
+                        allowNetwork: tuning.analyseICloudPhotos
                     )
+                    if case let .image(cgImage) = imageResult,
+                       let result = try? await analyzer.analyze(
+                           image: cgImage,
+                           isFavorite: asset.isFavorite
+                       ) {
+                        asset.featurePrint = result.featurePrint
+                        asset.score = result.score
+                        asset.sceneTags = result.sceneTags
+                        try? await cache.store(
+                            id: asset.id,
+                            modificationDate: asset.modificationDate,
+                            featurePrint: result.featurePrint,
+                            score: result.score,
+                            sceneTags: result.sceneTags
+                        )
+                    }
                 }
                 if asset.isAnalysed { updated.append(asset) }
             }
