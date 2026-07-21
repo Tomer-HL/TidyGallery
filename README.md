@@ -230,6 +230,22 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 6 (exact duplicates): `ExactDuplicateFinder` catches the case visual
+clustering structurally cannot — the *same* image present twice, however far
+apart in time. Rather than hashing gigabytes of original data, it exploits the
+fact that byte-identical copies must agree on cheap metadata: bucket by
+`(pixelWidth, pixelHeight, fileSize)`, then confirm inside each bucket with the
+feature prints already computed and cached (identical images give an identical
+embedding, so distance is ~0). The per-asset sizes come from the same single
+off-main pass that produces the dashboard total, so this costs no extra I/O.
+
+Because an exact match involves no judgement call, these are the one thing the
+app pre-checks: the "Exact duplicates" screen opens with every redundant copy
+already selected. The safety rules still hold — **one copy of each group is
+always kept**, and a **favorite is never offered for deletion** (a favorite is
+preferred as the copy kept). They also feed "Recommended cleanup" and get their
+own ring segment. `ExactDuplicateFinderTests` pins all of these invariants.
+
 The dashboard also shows a **storage ring** (Swift Charts `SectorMark` donut,
 `StorageRingView`) visualising where reclaimable space lives against the rest of
 the library, the **total library size** (`PhotoLibraryService.totalLibraryBytes`,

@@ -73,6 +73,14 @@ final class LibraryScanCoordinator {
     /// `nil` until the background measurement finishes.
     private(set) var totalLibraryBytes: Int64?
 
+    /// Groups of byte-identical copies of the same image, found regardless of
+    /// how far apart in time they were added.
+    private(set) var exactDuplicateGroups: [[PhotoAsset]] = []
+
+    /// The safe-to-delete copies from those groups (one copy of each is always
+    /// kept, and favorites are never included).
+    private(set) var exactDuplicateExtras: [PhotoAsset] = []
+
     /// Background task computing `totalLibraryBytes`.
     private var totalSizeTask: Task<Void, Never>?
 
@@ -248,23 +256,52 @@ final class LibraryScanCoordinator {
         refreshStorageSummary()
     }
 
-    /// The pre-selected near-duplicate photos across all stacks (the engine's
-    /// safe, conservative deletion suggestions), flattened into one list.
+    /// The engine's safe deletion suggestions, flattened into one list: the
+    /// conservatively pre-selected near-duplicates, plus every redundant copy of
+    /// a byte-identical image (the safest possible deletion — an exact copy is
+    /// always kept). De-duplicated in case an asset qualifies both ways.
     private func recommendedDeletions() -> [PhotoAsset] {
-        stacks.flatMap { stack in
+        let preselected = stacks.flatMap { stack in
             stack.assets.filter { stack.assetsPreselectedForDeletion.contains($0.id) }
+        }
+        var seen = Set<PhotoAsset.ID>()
+        return (preselected + exactDuplicateExtras).filter { seen.insert($0.id).inserted }
+    }
+
+    /// Kick off the (heavy, off-main) library size measurement. One pass serves
+    /// two jobs: the dashboard's total, and the per-asset sizes that
+    /// `ExactDuplicateFinder` needs to spot byte-identical copies. Runs once per
+    /// full scan; results land when ready.
+    private func measureTotalLibrarySize() {
+        let assets = analysedAssets
+        let finder = ExactDuplicateFinder(config: config)
+
+        totalSizeTask?.cancel()
+        totalSizeTask = Task { [weak self, library] in
+            let sizes = await library.libraryFileSizes()
+            guard !Task.isCancelled else { return }
+
+            let total = sizes.values.reduce(0, +)
+            let groups = finder.groups(from: assets, sizes: sizes)
+            let extras = finder.extras(in: groups)
+            guard !Task.isCancelled else { return }
+
+            self?.applyLibraryMeasurements(total: total, groups: groups, extras: extras)
         }
     }
 
-    /// Kick off the (heavy, off-main) total-library-size measurement. Runs once
-    /// per full scan; the result populates `totalLibraryBytes` when ready.
-    private func measureTotalLibrarySize() {
-        totalSizeTask?.cancel()
-        totalSizeTask = Task { [weak self, library] in
-            let total = await library.totalLibraryBytes()
-            guard !Task.isCancelled else { return }
-            self?.totalLibraryBytes = total
-        }
+    /// Publish the background measurement results and refresh anything derived
+    /// from them (recommendations and the reclaimable-space breakdown).
+    private func applyLibraryMeasurements(
+        total: Int64,
+        groups: [[PhotoAsset]],
+        extras: [PhotoAsset]
+    ) {
+        totalLibraryBytes = total
+        exactDuplicateGroups = groups
+        exactDuplicateExtras = extras
+        recommendedAssets = recommendedDeletions()
+        refreshStorageSummary()
     }
 
     /// Recomputes the dashboard's reclaimable-space breakdown.
@@ -281,12 +318,14 @@ final class LibraryScanCoordinator {
         let duplicateIDs = Set(stacks.flatMap { stack in
             stack.assets.map(\.id).filter { $0 != stack.bestShotID }
         })
+        let exactIDs = Set(exactDuplicateExtras.map(\.id))
         let videoIDs = largeVideos.map(\.id)
         let bigFileIDs = bigFileCandidates.map(\.id)
         let recordingIDs = screenRecordings.map(\.id)
         let screenshotIDs = screenshots.map(\.id)
 
         let unionIDs = duplicateIDs
+            .union(exactIDs)
             .union(videoIDs)
             .union(bigFileIDs)
             .union(recordingIDs)
@@ -314,6 +353,7 @@ final class LibraryScanCoordinator {
 
             self?.storageSummary = StorageSummary(
                 reclaimableBytes: bytes(unionIDs),
+                exactDuplicates: .init(count: exactIDs.count, bytes: bytes(exactIDs)),
                 duplicates: .init(count: duplicateIDs.count, bytes: bytes(duplicateIDs)),
                 largeVideos: .init(count: videoCount, bytes: bytes(videoIDs)),
                 bigFiles: .init(count: bigFileCount, bytes: bytes(bigFileIDs)),
@@ -413,6 +453,10 @@ final class LibraryScanCoordinator {
         documentPhotos.removeAll { removed.contains($0.id) }
         naturePhotos.removeAll { removed.contains($0.id) }
         selfiePhotos.removeAll { removed.contains($0.id) }
+        exactDuplicateExtras.removeAll { removed.contains($0.id) }
+        exactDuplicateGroups = exactDuplicateGroups
+            .map { $0.filter { !removed.contains($0.id) } }
+            .filter { $0.count > 1 }
         pruneStacks(removing: removed)
         recommendedAssets = recommendedDeletions()
         refreshStorageSummary()

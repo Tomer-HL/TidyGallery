@@ -27,6 +27,7 @@ struct StorageRingView: View {
         func add(_ name: String, _ item: StorageSummary.LineItem, _ color: Color) {
             if item.bytes > 0 { segs.append(Segment(name: name, bytes: item.bytes, color: color)) }
         }
+        add("Exact duplicates", summary.exactDuplicates, .green)
         add("Duplicates", summary.duplicates, Theme.Colors.accent)
         add("Large videos", summary.largeVideos, Theme.Colors.best)
         add("Big files", summary.bigFiles, Theme.Colors.destructive)

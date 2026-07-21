@@ -51,6 +51,11 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// stack. Real near-duplicates cap out at 0.30, so this loses nothing.
     var featurePrintSimilarityThreshold: Float = 0.35
 
+    /// Feature-print distance under which two images that already share exact
+    /// dimensions and byte size are treated as the *same* image. Identical files
+    /// produce an identical embedding, so this only needs to absorb rounding.
+    var exactDuplicateDistanceEpsilon: Float = 0.02
+
     /// Stricter similarity required before two *document* photos are treated as
     /// near-duplicates. Pages of text share a near-identical layout, so the
     /// generic threshold happily merges genuinely different pages. Two shots of

@@ -16,6 +16,7 @@ struct CleanupHomeView: View {
     let coordinator: LibraryScanCoordinator
 
     // Colours shared by the ring segments and the breakdown legend.
+    private let colorExactDuplicates = Color.green
     private let colorDuplicates = Theme.Colors.accent
     private let colorVideos = Theme.Colors.best
     private let colorBigFiles = Theme.Colors.destructive
@@ -29,6 +30,7 @@ struct CleanupHomeView: View {
                     summaryCard
 
                     sectionHeader("Reclaim space")
+                    exactDuplicatesCard
                     duplicatesCard
                     flatCard(.largeVideos, assets: coordinator.largeVideos)
                     flatCard(.bigFiles, assets: coordinator.bigFileCandidates)
@@ -76,6 +78,7 @@ struct CleanupHomeView: View {
 
             if summary.hasReclaimableSpace {
                 VStack(spacing: Theme.Spacing.xs) {
+                    breakdownRow("Exact duplicates", summary.exactDuplicates, colorExactDuplicates)
                     breakdownRow("Duplicate extras", summary.duplicates, colorDuplicates)
                     breakdownRow("Large videos", summary.largeVideos, colorVideos)
                     breakdownRow("Big files", summary.bigFiles, colorBigFiles)
@@ -159,6 +162,26 @@ struct CleanupHomeView: View {
     }
 
     // MARK: Cards
+
+    /// Byte-identical copies. Opens pre-checked: unlike visual near-duplicates
+    /// there's no judgement call, and one copy of each is always kept.
+    private var exactDuplicatesCard: some View {
+        let extras = coordinator.exactDuplicateExtras
+        return categoryCard(
+            icon: CleanupCategory.exactDuplicates.systemImage,
+            title: CleanupCategory.exactDuplicates.title,
+            blurb: CleanupCategory.exactDuplicates.blurb,
+            count: extras.count,
+            countLabel: "\(extras.count) cop\(extras.count == 1 ? "y" : "ies")"
+        ) {
+            AssetCleanupScreen(
+                category: .exactDuplicates,
+                assets: extras,
+                initiallySelected: Set(extras.map(\.id)),
+                onDeleted: { coordinator.noteDeleted(ids: $0) }
+            )
+        }
+    }
 
     private var duplicatesCard: some View {
         categoryCard(

@@ -29,6 +29,10 @@ struct StorageSummary: Sendable, Equatable {
     /// asset counted in two categories (e.g. a big screenshot) isn't summed twice.
     var reclaimableBytes: Int64
 
+    /// Redundant copies of byte-identical images — the highest-confidence
+    /// reclaimable space, since one copy is always kept.
+    var exactDuplicates: LineItem
+
     var duplicates: LineItem
     var largeVideos: LineItem
     var bigFiles: LineItem
@@ -37,6 +41,7 @@ struct StorageSummary: Sendable, Equatable {
 
     static let empty = StorageSummary(
         reclaimableBytes: 0,
+        exactDuplicates: .zero,
         duplicates: .zero,
         largeVideos: .zero,
         bigFiles: .zero,

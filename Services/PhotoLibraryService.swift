@@ -401,28 +401,35 @@ final class PhotoLibraryService {
         return sizes
     }
 
-    /// Total on-disk size of the whole library (photos + videos), for the
-    /// dashboard's "of X used" reference figure.
+    /// On-disk size of **every** asset in the library, keyed by local identifier.
     ///
-    /// `nonisolated` on purpose: this sums a `fileSize` resource lookup for every
+    /// One pass serves two jobs: summing it gives the dashboard's "of X used"
+    /// figure, and the per-asset sizes are the cheap pre-filter that
+    /// `ExactDuplicateFinder` uses to find identical copies.
+    ///
+    /// `nonisolated` on purpose: this does a `fileSize` resource lookup for every
     /// asset, which is heavy on a large library. The Photos read APIs used here
     /// are thread-safe, so we run it off the main actor (kicked off in the
     /// background once per scan) to avoid blocking the UI. It never mutates
     /// anything and touches no main-actor state.
-    nonisolated func totalLibraryBytes() async -> Int64 {
+    nonisolated func libraryFileSizes() async -> [String: Int64] {
         let options = PHFetchOptions()
         options.includeHiddenAssets = false
         let assets = PHAsset.fetchAssets(with: options)
 
-        var total: Int64 = 0
+        var sizes: [String: Int64] = [:]
         assets.enumerateObjects { asset, _, _ in
+            var total: Int64 = 0
+            var found = false
             for resource in PHAssetResource.assetResources(for: asset) {
                 if let number = resource.value(forKey: "fileSize") as? NSNumber {
                     total += number.int64Value
+                    found = true
                 }
             }
+            if found { sizes[asset.localIdentifier] = total }
         }
-        return total
+        return sizes
     }
 
     // MARK: - Deletion (Phase 2 entry point — kept here for cohesion)

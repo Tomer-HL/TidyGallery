@@ -28,6 +28,7 @@ struct CleanupCategory: Identifiable, Hashable {
         case nature
         case selfies
         case recommended
+        case exactDuplicates
     }
 
     let kind: Kind
@@ -193,6 +194,20 @@ struct CleanupCategory: Identifiable, Hashable {
         blurb: "Close-up portraits, detected from face size",
         emptyTitle: "No selfies",
         emptySubtitle: "We didn't detect any selfies to review.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let exactDuplicates = CleanupCategory(
+        kind: .exactDuplicates,
+        title: "Exact duplicates",
+        systemImage: "doc.on.doc",
+        noun: "copy",
+        blurb: "Identical copies of the same image — one is always kept",
+        emptyTitle: "No exact duplicates",
+        emptySubtitle: "We didn't find any identical copies in your library.",
         isVideo: false,
         sortsBySizeDescending: false,
         displayLimit: nil,
