@@ -212,3 +212,14 @@ their scene tags instead of staying uncategorised. The SwiftData container build
 — a migration failure wipes the disposable cache and retries (finally falling
 back to in-memory) rather than crashing on launch. The classifier runs on still
 images only; these categories are surfacing-only, like the rest.
+
+Phase 5 (storage dashboard): the home now opens with a summary card showing how
+much space is reclaimable (`StorageSummary`, computed by the coordinator by
+measuring real on-disk sizes for the bounded space-heavy sets — pre-selected
+duplicates, videos, big files, recordings — de-duplicated so an asset in two
+categories isn't summed twice), with a per-category byte breakdown. Below it the
+categories are grouped into sections: **Reclaim space** (Duplicates, Large
+videos, Big files, Screen recordings), **Clutter** (Screenshots, Possibly
+blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summary
+recomputes on scan, on the debounced library-change pass, and immediately after a
+delete.

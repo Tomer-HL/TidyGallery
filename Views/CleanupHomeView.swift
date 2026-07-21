@@ -2,11 +2,12 @@
 //  CleanupHomeView.swift
 //  TidyGallery
 //
-//  The post-scan home. Instead of a crowded tab bar, cleanup categories are
-//  presented as a scrollable list of cards (à la CleanMy®Phone): "Duplicates"
-//  leads to the best-shot review flow, and the standalone categories each open a
-//  reusable `AssetCleanupScreen`. Cards show a live count and dim to a dead-end
-//  only when empty.
+//  The post-scan home dashboard. A summary card up top shows how much space is
+//  reclaimable; below it, cleanup categories are grouped into sections
+//  ("Reclaim space", "Clutter", "By content"). "Duplicates" leads to the
+//  best-shot review flow; the standalone categories each open a reusable
+//  `AssetCleanupScreen`. Cards show a live count and dim to a dead-end only when
+//  empty.
 //
 
 import SwiftUI
@@ -18,28 +19,19 @@ struct CleanupHomeView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: Theme.Spacing.m) {
-                    header
+                    summaryCard
 
-                    // Duplicates / bursts — its own best-shot workflow.
-                    categoryCard(
-                        icon: "square.stack.3d.up.fill",
-                        title: "Duplicates",
-                        blurb: "Bursts and near-duplicates, with the best shot picked for you",
-                        count: coordinator.stacks.count,
-                        countLabel: "\(coordinator.stacks.count) group\(coordinator.stacks.count == 1 ? "" : "s")"
-                    ) {
-                        ReviewScreen(
-                            stacks: coordinator.stacks,
-                            onDeleted: { coordinator.noteDeleted(ids: $0) }
-                        )
-                    }
-
-                    // Standalone flat-list categories.
-                    flatCard(.screenshots, assets: coordinator.screenshots)
+                    sectionHeader("Reclaim space")
+                    duplicatesCard
                     flatCard(.largeVideos, assets: coordinator.largeVideos)
                     flatCard(.bigFiles, assets: coordinator.bigFileCandidates)
                     flatCard(.screenRecordings, assets: coordinator.screenRecordings)
+
+                    sectionHeader("Clutter")
+                    flatCard(.screenshots, assets: coordinator.screenshots)
                     flatCard(.blurry, assets: coordinator.blurryPhotos)
+
+                    sectionHeader("By content")
                     flatCard(.food, assets: coordinator.foodPhotos)
                     flatCard(.pets, assets: coordinator.petPhotos)
                     flatCard(.documents, assets: coordinator.documentPhotos)
@@ -54,24 +46,91 @@ struct CleanupHomeView: View {
         .tint(Theme.Colors.accent)
     }
 
-    // MARK: Header
+    // MARK: Summary card
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Text("Everything below is a suggestion.")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.Colors.textPrimary)
-            Text("Nothing is deleted until you select it and confirm.")
-                .font(.subheadline)
+    private var summaryCard: some View {
+        let summary = coordinator.storageSummary
+        return VStack(alignment: .leading, spacing: Theme.Spacing.m) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Up to")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                Text(summary.reclaimableBytes > 0
+                     ? summary.reclaimableBytes.formatted(.byteCount(style: .file))
+                     : "0 KB")
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .monospacedDigit()
+                Text("reclaimable across duplicates, videos, and large files")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+
+            if summary.hasReclaimableSpace {
+                VStack(spacing: Theme.Spacing.xs) {
+                    breakdownRow("Duplicates", summary.duplicates)
+                    breakdownRow("Large videos", summary.largeVideos)
+                    breakdownRow("Big files", summary.bigFiles)
+                    breakdownRow("Screen recordings", summary.screenRecordings)
+                }
+            }
+
+            Divider().overlay(Theme.Colors.hairline)
+
+            Text("Everything below is a suggestion — nothing is deleted until you select it and confirm.")
+                .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Spacing.l)
-        .background(Theme.Colors.surfaceMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .padding(.bottom, Theme.Spacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func breakdownRow(_ title: String, _ item: StorageSummary.LineItem) -> some View {
+        if item.bytes > 0 {
+            HStack {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                Spacer()
+                Text(item.bytes.formatted(.byteCount(style: .file)))
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.Colors.textPrimary)
+            }
+        }
+    }
+
+    // MARK: Section header
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption.weight(.semibold))
+            .tracking(0.5)
+            .foregroundStyle(Theme.Colors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, Theme.Spacing.s)
+            .padding(.leading, Theme.Spacing.xs)
     }
 
     // MARK: Cards
+
+    private var duplicatesCard: some View {
+        categoryCard(
+            icon: "square.stack.3d.up.fill",
+            title: "Duplicates",
+            blurb: "Bursts and near-duplicates, with the best shot picked for you",
+            count: coordinator.stacks.count,
+            countLabel: "\(coordinator.stacks.count) group\(coordinator.stacks.count == 1 ? "" : "s")"
+        ) {
+            ReviewScreen(
+                stacks: coordinator.stacks,
+                onDeleted: { coordinator.noteDeleted(ids: $0) }
+            )
+        }
+    }
 
     /// Card for a standalone `CleanupCategory` backed by a flat asset list.
     private func flatCard(_ category: CleanupCategory, assets: [PhotoAsset]) -> some View {

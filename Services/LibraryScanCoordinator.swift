@@ -62,6 +62,9 @@ final class LibraryScanCoordinator {
     private(set) var naturePhotos: [PhotoAsset] = []
     private(set) var selfiePhotos: [PhotoAsset] = []
 
+    /// Reclaimable-space breakdown for the home dashboard.
+    private(set) var storageSummary: StorageSummary = .empty
+
     // MARK: Collaborators
 
     private let library: PhotoLibraryService
@@ -226,6 +229,37 @@ final class LibraryScanCoordinator {
         documentPhotos = photosTagged(.documents)
         naturePhotos = photosTagged(.nature)
         selfiePhotos = photosTagged(.selfies)
+        storageSummary = computeStorageSummary()
+    }
+
+    /// Measures reclaimable space across the size-heavy categories in one bounded
+    /// pass. The categories are small (pre-selected duplicates, videos, ≤100 big
+    /// files, recordings), so measuring their real on-disk sizes here is cheap.
+    /// The total de-duplicates ids so an asset in two categories isn't summed twice.
+    private func computeStorageSummary() -> StorageSummary {
+        let duplicateIDs = Set(stacks.flatMap { $0.assetsPreselectedForDeletion })
+        let videoIDs = largeVideos.map(\.id)
+        let bigFileIDs = bigFileCandidates.map(\.id)
+        let recordingIDs = screenRecordings.map(\.id)
+
+        let unionIDs = duplicateIDs
+            .union(videoIDs)
+            .union(bigFileIDs)
+            .union(recordingIDs)
+        guard !unionIDs.isEmpty else { return .empty }
+
+        let sizes = library.fileSizes(for: Array(unionIDs))
+        func bytes<S: Sequence>(_ ids: S) -> Int64 where S.Element == String {
+            ids.reduce(0) { $0 + (sizes[$1] ?? 0) }
+        }
+
+        return StorageSummary(
+            reclaimableBytes: bytes(unionIDs),
+            duplicates: .init(count: duplicateIDs.count, bytes: bytes(duplicateIDs)),
+            largeVideos: .init(count: largeVideos.count, bytes: bytes(videoIDs)),
+            bigFiles: .init(count: bigFileCandidates.count, bytes: bytes(bigFileIDs)),
+            screenRecordings: .init(count: screenRecordings.count, bytes: bytes(recordingIDs))
+        )
     }
 
     /// Analysed stills carrying a given content tag, newest first. Surfacing-only
@@ -319,6 +353,7 @@ final class LibraryScanCoordinator {
         naturePhotos.removeAll { removed.contains($0.id) }
         selfiePhotos.removeAll { removed.contains($0.id) }
         pruneStacks(removing: removed)
+        storageSummary = computeStorageSummary()
         phase = .finished(stackCount: stacks.count)
     }
 
