@@ -67,7 +67,16 @@ struct StackBuilder {
                    locationA.distance(from: locationB) > config.maxBurstDistanceMeters {
                     continue
                 }
-                if printA.distance(to: printB) <= config.featurePrintSimilarityThreshold {
+                // Document pages share a layout, so they need to be far more
+                // similar before we call them duplicates — otherwise different
+                // pages of the same book merge into one stack.
+                let isDocumentPair = sorted[i].sceneTags.contains(.documents)
+                    || sorted[j].sceneTags.contains(.documents)
+                let threshold = isDocumentPair
+                    ? config.documentSimilarityThreshold
+                    : config.featurePrintSimilarityThreshold
+
+                if printA.distance(to: printB) <= threshold {
                     uf.union(i, j)
                 }
             }

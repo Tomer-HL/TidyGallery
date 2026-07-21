@@ -25,7 +25,9 @@ final class CachedAnalysis {
     ///   v1 → feature print + score
     ///   v2 → adds on-device scene tags (food / pets / documents)
     ///   v3 → adds nature (classifier) + selfies (face geometry) tags
-    static let currentSchemaVersion = 3
+    ///   v4 → classifier sensitivity fix (top-N labels over a low floor) and a
+    ///        much wider keyword map, so scene tags must be recomputed
+    static let currentSchemaVersion = 4
 
     /// `PHAsset.localIdentifier`. Unique so we can upsert by identity.
     @Attribute(.unique) var localIdentifier: String

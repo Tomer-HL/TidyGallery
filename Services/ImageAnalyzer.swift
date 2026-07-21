@@ -110,10 +110,15 @@ actor ImageAnalyzer {
             return []
         }
         let observations = request.results ?? []
+        // Take the strongest few labels above a low floor rather than applying a
+        // high absolute confidence gate: this classifier spreads confidence
+        // across a very large taxonomy, so correct labels often score low.
         let confidentIdentifiers = observations
             .filter { $0.confidence >= config.sceneClassificationMinConfidence }
+            .sorted { $0.confidence > $1.confidence }
+            .prefix(config.sceneClassificationTopLabels)
             .map(\.identifier)
-        return SceneCategory.categories(forIdentifiers: confidentIdentifiers)
+        return SceneCategory.categories(forIdentifiers: Array(confidentIdentifiers))
     }
 
     /// A photo reads as a selfie when at least one detected face is large enough

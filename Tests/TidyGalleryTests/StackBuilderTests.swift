@@ -84,6 +84,46 @@ struct StackBuilderTests {
         #expect(hasCluster(clusters, ["a", "b", "c"]))
     }
 
+    @Test("Different document pages are not merged (stricter document threshold)")
+    func documentPagesStayApart() {
+        // Two unit vectors ~0.25 apart: above the document threshold (0.20) but
+        // below the general one (0.35).
+        let a = FeaturePrint(vector: [1, 0])
+        let b = FeaturePrint(vector: [0.96875, 0.24803])
+
+        // Ordinary photos at this distance DO cluster.
+        let p1 = PhotoAsset.make(id: "p1", secondsFromEpoch: 100, featurePrint: a)
+        let p2 = PhotoAsset.make(id: "p2", secondsFromEpoch: 105, featurePrint: b)
+        #expect(builder.cluster([p1, p2]).count == 1)
+
+        // The same pair tagged as documents must stay apart — different pages of
+        // one book share a layout but aren't duplicates.
+        let d1 = documentAsset(id: "d1", secondsFromEpoch: 100, featurePrint: a)
+        let d2 = documentAsset(id: "d2", secondsFromEpoch: 105, featurePrint: b)
+        #expect(builder.cluster([d1, d2]).count == 2)
+    }
+
+    /// A document-tagged asset (the `make` helper doesn't carry scene tags).
+    private func documentAsset(
+        id: String,
+        secondsFromEpoch: TimeInterval,
+        featurePrint: FeaturePrint
+    ) -> PhotoAsset {
+        let date = Date(timeIntervalSince1970: secondsFromEpoch)
+        return PhotoAsset(
+            id: id,
+            creationDate: date,
+            modificationDate: date,
+            pixelWidth: 4000,
+            pixelHeight: 3000,
+            isFavorite: false,
+            coordinate: nil,
+            featurePrint: featurePrint,
+            score: nil,
+            sceneTags: [.documents]
+        )
+    }
+
     @Test("Assets without a creation date are isolated, never dropped")
     func noDateIsolated() {
         let dated = PhotoAsset.make(id: "a", secondsFromEpoch: 100, featurePrint: FeaturePrint(vector: [1, 0]))

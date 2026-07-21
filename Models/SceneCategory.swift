@@ -38,14 +38,21 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
                 "drink", "beverage", "breakfast", "lunch", "dinner", "snack",
                 "bread", "cake", "pizza", "burger", "hamburger", "sushi", "salad",
                 "soup", "pasta", "coffee", "sandwich", "seafood", "pastry",
-                "noodle", "noodles", "rice", "cocktail", "wine", "hotdog"
+                "noodle", "noodles", "rice", "cocktail", "wine", "hotdog",
+                // Baked goods (a challah reads as bread/loaf/bakery to Vision).
+                "bakery", "baked", "loaf", "bun", "roll", "dough", "toast",
+                "croissant", "pie", "cookie", "cheese", "egg", "meat", "chicken"
             ]
         case .pets:
             return ["dog", "cat", "puppy", "kitten", "kitty", "pet", "pets"]
         case .documents:
             return [
                 "document", "documents", "text", "paper", "receipt", "menu",
-                "invoice", "whiteboard", "newspaper"
+                "invoice", "whiteboard", "newspaper",
+                // A photographed book/notebook page reads as book/page/print.
+                "book", "books", "page", "handwriting", "handwritten", "note",
+                "notes", "notebook", "letter", "print", "printout", "magazine",
+                "poster", "sign", "label", "card", "screenshot"
             ]
         case .nature:
             return [

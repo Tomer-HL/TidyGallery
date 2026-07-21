@@ -43,9 +43,20 @@ struct AnalysisConfiguration: Sendable, Equatable {
     ///
     /// Calibrated on a real sample (CalibrationTool): burst/duplicate pairs
     /// clustered at 0.16–0.30, unrelated photos at 0.77–1.25, with an empty gap
-    /// between. 0.45 sits in that gap with margin on both sides — comfortably
-    /// above the duplicate ceiling, well below the "different scene" floor.
-    var featurePrintSimilarityThreshold: Float = 0.45
+    /// between. 0.35 sits just above the observed duplicate ceiling (0.30) while
+    /// staying far below the "different scene" floor.
+    ///
+    /// Tightened from 0.45: photos that merely share a composition — most
+    /// notably two different pages of the same book — were being merged into one
+    /// stack. Real near-duplicates cap out at 0.30, so this loses nothing.
+    var featurePrintSimilarityThreshold: Float = 0.35
+
+    /// Stricter similarity required before two *document* photos are treated as
+    /// near-duplicates. Pages of text share a near-identical layout, so the
+    /// generic threshold happily merges genuinely different pages. Two shots of
+    /// the *same* page still cluster (they're nearly pixel-identical); different
+    /// pages don't. Applied when either photo carries the `.documents` tag.
+    var documentSimilarityThreshold: Float = 0.20
 
     /// If both assets carry a location, discard the pair from a burst when they
     /// are farther apart than this (meters). Guards against grouping photos that
@@ -116,11 +127,20 @@ struct AnalysisConfiguration: Sendable, Equatable {
 
     // MARK: Scene classification (Food / Pets / Documents…)
 
-    /// Minimum confidence for a Vision classification label to be trusted when
-    /// mapping a photo to a content category. Higher = fewer false positives,
-    /// fewer photos surfaced. These categories are surfacing-only (review before
-    /// delete), so a moderate threshold is a reasonable default.
-    var sceneClassificationMinConfidence: Float = 0.5
+    /// Floor for a Vision classification label to be considered at all.
+    ///
+    /// Deliberately low. `VNClassifyImageRequest` is a multi-label classifier
+    /// over a ~1300-class taxonomy, so confidence is spread thin — even a
+    /// correct "food" label routinely scores well under 0.5. An earlier 0.5 gate
+    /// meant almost nothing was ever tagged. We instead take the top few labels
+    /// (see `sceneClassificationTopLabels`) above this small floor, which is what
+    /// the taxonomy's scoring actually supports.
+    var sceneClassificationMinConfidence: Float = 0.05
+
+    /// How many of the highest-confidence labels to consider per image. Keeping
+    /// this small stops the long tail of low-confidence noise from producing
+    /// false category matches.
+    var sceneClassificationTopLabels: Int = 10
 
     /// A photo counts as a selfie when its largest detected face covers at least
     /// this fraction of the frame (normalised area). ~0.10 catches close-up
