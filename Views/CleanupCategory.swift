@@ -46,6 +46,10 @@ struct CleanupCategory: Identifiable, Hashable {
     let sortsBySizeDescending: Bool
     /// Optional cap on how many items to display after sorting (nil = all).
     let displayLimit: Int?
+    /// Optional minimum on-disk size (bytes) an item must reach to be shown once
+    /// sizes are measured. Keeps "Big files" from listing every ordinary photo.
+    /// `nil` = no size floor.
+    let minDisplayBytes: Int64?
 
     // MARK: Presets
 
@@ -59,7 +63,8 @@ struct CleanupCategory: Identifiable, Hashable {
         emptySubtitle: "You don't have any screenshots to clean up right now.",
         isVideo: false,
         sortsBySizeDescending: false,
-        displayLimit: nil
+        displayLimit: nil,
+        minDisplayBytes: nil
     )
 
     static let largeVideos = CleanupCategory(
@@ -72,7 +77,8 @@ struct CleanupCategory: Identifiable, Hashable {
         emptySubtitle: "There are no videos in your library to review.",
         isVideo: true,
         sortsBySizeDescending: true,
-        displayLimit: nil
+        displayLimit: nil,
+        minDisplayBytes: nil
     )
 
     static let bigFiles = CleanupCategory(
@@ -85,7 +91,8 @@ struct CleanupCategory: Identifiable, Hashable {
         emptySubtitle: "We didn't find unusually large photos to review.",
         isVideo: false,
         sortsBySizeDescending: true,
-        displayLimit: 100
+        displayLimit: nil,          // the coordinator already floors, sorts, and caps
+        minDisplayBytes: nil
     )
 
     static let screenRecordings = CleanupCategory(
@@ -98,7 +105,8 @@ struct CleanupCategory: Identifiable, Hashable {
         emptySubtitle: "We didn't find any screen recordings to clean up.",
         isVideo: true,
         sortsBySizeDescending: true,
-        displayLimit: nil
+        displayLimit: nil,
+        minDisplayBytes: nil
     )
 
     static let blurry = CleanupCategory(
@@ -111,6 +119,7 @@ struct CleanupCategory: Identifiable, Hashable {
         emptySubtitle: "We didn't flag any standalone photos as soft.",
         isVideo: false,
         sortsBySizeDescending: false,
-        displayLimit: nil
+        displayLimit: nil,
+        minDisplayBytes: nil
     )
 }

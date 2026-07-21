@@ -19,10 +19,21 @@ struct AnalysisConfiguration: Sendable, Equatable {
 
     // MARK: Clustering
 
-    /// Maximum time between two consecutive photos for them to be considered
-    /// part of the same burst. Photos are sorted by `creationDate`; a gap
-    /// larger than this starts a new time bucket.
-    var burstTimeWindow: TimeInterval = 10
+    /// Upper bound on how far apart in time two photos can be and still be
+    /// considered for the same near-duplicate group.
+    ///
+    /// This is deliberately generous (30 minutes). People reshoot the same
+    /// subject over seconds *to minutes*, not only in a machine-gun burst, so a
+    /// tight window (the old 10s) missed most real duplicates. Visual similarity
+    /// (`featurePrintSimilarityThreshold`) remains the actual test for
+    /// "duplicate"; this only caps how far the search looks ahead in time.
+    var burstTimeWindow: TimeInterval = 1800
+
+    /// How many subsequent photos (in capture-time order) each photo is compared
+    /// against when hunting for near-duplicates. Bounds clustering to O(n·k) so
+    /// it stays fast on 20k+ libraries while still catching duplicates that are
+    /// spread across a shooting session rather than a rapid burst.
+    var duplicateNeighborLookahead: Int = 60
 
     /// Feature-print distance threshold below which two images inside the same
     /// time bucket are considered visually similar and merged into one stack.
@@ -71,13 +82,23 @@ struct AnalysisConfiguration: Sendable, Equatable {
 
     // MARK: Phase 3 — standalone cleanup categories
 
-    /// A standalone still is surfaced under "Possibly blurry" only when its
-    /// **absolute** sharpness is at or below this. Deliberately low: Laplacian
-    /// variance is content-dependent (see `BlurDetector`), so an absolute gate
-    /// can only be trusted to flag clearly-soft images. Blurry singles are a
-    /// SURFACING-ONLY category — they are never pre-selected for deletion, so a
-    /// false positive costs the user a glance, never a photo.
-    var blurrySinglesSharpnessCeiling: Double = 0.12
+    /// "Possibly blurry" is a **relative** judgement, not an absolute one.
+    /// Laplacian variance depends on content *and* image size, so a fixed cutoff
+    /// over-flags on some libraries and under-flags on others. A photo is
+    /// surfaced only when it is BOTH below this absolute ceiling AND within the
+    /// softest `blurryPercentile` of the whole library, and the list is capped at
+    /// `blurryMaxCount`. Together these stop the category from ever becoming a
+    /// catch-all when every photo happens to score low. It stays
+    /// SURFACING-ONLY — never pre-selected — so a false positive costs a glance,
+    /// never a photo.
+    var blurrySinglesSharpnessCeiling: Double = 0.20
+
+    /// Only the softest fraction of the library is eligible for "Possibly
+    /// blurry" (combined with the absolute ceiling above).
+    var blurryPercentile: Double = 0.15
+
+    /// Hard cap on how many photos "Possibly blurry" ever surfaces.
+    var blurryMaxCount: Int = 200
 
     /// How many of the highest-resolution stills to measure as "big file"
     /// candidates. Reading real on-disk size for a whole 20k library is
@@ -88,6 +109,10 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// How many entries the "Big files" screen shows after measuring real sizes
     /// and sorting largest-first.
     var bigFileDisplayLimit: Int = 100
+
+    /// Minimum real on-disk size for a photo to count as a "big file". Keeps the
+    /// category meaningful (largest space hogs) instead of listing every photo.
+    var bigFileMinBytes: Int64 = 5_000_000   // ~5 MB
 
     static let `default` = AnalysisConfiguration()
 }

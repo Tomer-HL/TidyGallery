@@ -11,8 +11,11 @@ On-device, privacy-first photo cleanup for iOS 18+. This phase delivers the arch
 | Face analysis | Full: eyes-open (EAR) + smile geometry in Phase 1 |
 | Persistence | SwiftData cache, delta re-analysis via change observer |
 | Favorites | **Hard lock** — never pre-selected for deletion |
-| Stacks | Time-clustered bursts only, ~10s window |
-| Pre-selection | Conservative — only clearly-inferior near-duplicates |
+| Stacks | Session-aware near-duplicates: visual match within a 30-min window, bounded by an N-neighbour lookahead (not just ~10s bursts) |
+| Stack visibility | Every 2+ group is shown for review, even when nothing is confidently pre-selected |
+| Pre-selection | Conservative — only clearly-inferior near-duplicates are pre-checked |
+| Big files | Real on-disk size floor (~5 MB), measured on a bounded candidate pool |
+| Possibly blurry | Relative: below an absolute ceiling **and** in the library's softest percentile, capped |
 
 ## Project structure
 

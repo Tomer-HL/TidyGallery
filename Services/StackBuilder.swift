@@ -5,15 +5,17 @@
 //  Groups analysed photos into "stacks" of near-duplicates.
 //
 //  Algorithm (and why it scales to 20k+):
-//  1. TIME GATE FIRST. Sort by creationDate and split into buckets wherever the
-//     gap between consecutive photos exceeds `burstTimeWindow` (~10s). This is
-//     O(n log n) and immediately collapses the problem from "compare everything
-//     to everything" (O(n²) ≈ 400M ops for 20k) to many tiny buckets.
-//  2. VISUAL REFINE within each bucket only. Compare feature prints pairwise
-//     *inside* a bucket (buckets are small, so this is cheap) and union photos
-//     whose distance is below threshold. Optional location gate rejects pairs
-//     that are far apart in space.
-//  3. UNION-FIND to form connected components → stacks.
+//  1. SORT by creationDate.
+//  2. NEIGHBOUR SEARCH. For each photo, compare its feature print only against
+//     the next `duplicateNeighborLookahead` photos in time order, stopping early
+//     once the time gap exceeds `burstTimeWindow`. This bounds the work to
+//     O(n*k) instead of O(n^2), yet - unlike a hard time bucket - it groups
+//     duplicates spread across a shooting session (seconds to minutes apart),
+//     not just rapid-fire bursts. Visual similarity is the real duplicate test;
+//     time only limits how far the search looks. An optional location gate
+//     rejects pairs far apart in space.
+//  3. UNION-FIND to form connected components -> stacks (transitively chains a
+//     run of similar shots even when only neighbours are directly compared).
 //
 //  Pure and `Sendable`-friendly: takes value types in, returns clusters of ids.
 //
@@ -30,77 +32,51 @@ struct StackBuilder {
     }
 
     /// Groups analysed assets into clusters of `PhotoAsset.ID`.
-    /// Only assets with a feature print participate; unanalysed assets are
-    /// returned as singletons so nothing is silently dropped.
+    /// Only assets with a feature print participate; unanalysed or undated
+    /// assets are returned as singletons so nothing is silently dropped.
     func cluster(_ assets: [PhotoAsset]) -> [[PhotoAsset.ID]] {
         guard !assets.isEmpty else { return [] }
 
-        // Sort by creation date (nil dates sort to the end, each isolated).
+        // Sort by creation date (undated sort to the end; they never anchor a
+        // group and so remain singletons).
         let sorted = assets.sorted {
             ($0.creationDate ?? .distantFuture) < ($1.creationDate ?? .distantFuture)
         }
 
-        var clusters: [[PhotoAsset.ID]] = []
-        var bucket: [PhotoAsset] = []
-        var lastDate: Date?
+        var uf = UnionFind(count: sorted.count)
+        let lookahead = max(1, config.duplicateNeighborLookahead)
 
-        func flush() {
-            if !bucket.isEmpty {
-                clusters.append(contentsOf: refine(bucket))
-                bucket.removeAll(keepingCapacity: true)
-            }
-        }
+        for i in 0..<sorted.count {
+            // An undated or unanalysed photo can't anchor a near-duplicate group.
+            guard let dateA = sorted[i].creationDate,
+                  let printA = sorted[i].featurePrint else { continue }
+            let locationA = sorted[i].location
 
-        for asset in sorted {
-            defer { lastDate = asset.creationDate }
-            guard let date = asset.creationDate else {
-                // No timestamp → can't be part of a time burst; flush & isolate.
-                flush()
-                clusters.append([asset.id])
-                lastDate = nil
-                continue
-            }
-            if let last = lastDate, date.timeIntervalSince(last) > config.burstTimeWindow {
-                flush()
-            }
-            bucket.append(asset)
-        }
-        flush()
-        return clusters
-    }
+            var compared = 0
+            var j = i + 1
+            while j < sorted.count && compared < lookahead {
+                guard let dateB = sorted[j].creationDate else { break } // undated -> end of run
+                if dateB.timeIntervalSince(dateA) > config.burstTimeWindow { break }
+                compared += 1
+                defer { j += 1 }
 
-    // MARK: - Visual refinement within a time bucket
-
-    /// Splits one time bucket into visually-coherent sub-clusters using
-    /// union-find over pairwise feature-print distance.
-    private func refine(_ bucket: [PhotoAsset]) -> [[PhotoAsset.ID]] {
-        if bucket.count == 1 { return [[bucket[0].id]] }
-
-        var uf = UnionFind(count: bucket.count)
-
-        for i in 0..<bucket.count {
-            let a = bucket[i]
-            guard let pa = a.featurePrint else { continue }
-            for j in (i + 1)..<bucket.count {
-                let b = bucket[j]
-                guard let pb = b.featurePrint else { continue }
+                guard let printB = sorted[j].featurePrint else { continue }
 
                 // Location gate (only when both have coordinates).
-                if let la = a.location, let lb = b.location,
-                   la.distance(from: lb) > config.maxBurstDistanceMeters {
+                if let locationA, let locationB = sorted[j].location,
+                   locationA.distance(from: locationB) > config.maxBurstDistanceMeters {
                     continue
                 }
-
-                if pa.distance(to: pb) <= config.featurePrintSimilarityThreshold {
+                if printA.distance(to: printB) <= config.featurePrintSimilarityThreshold {
                     uf.union(i, j)
                 }
             }
         }
 
-        // Collect components.
+        // Collect connected components, preserving time order within each.
         var groups: [Int: [PhotoAsset.ID]] = [:]
-        for idx in 0..<bucket.count {
-            groups[uf.find(idx), default: []].append(bucket[idx].id)
+        for idx in 0..<sorted.count {
+            groups[uf.find(idx), default: []].append(sorted[idx].id)
         }
         return Array(groups.values)
     }

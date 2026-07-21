@@ -209,23 +209,56 @@ final class LibraryScanCoordinator {
         screenshots = library.fetchScreenshots()
         largeVideos = library.fetchVideos()
         screenRecordings = library.fetchScreenRecordings()
-        bigFileCandidates = library.fetchLargeFileCandidates(stillLimit: config.bigFileCandidateStillLimit)
+        bigFileCandidates = computeBigFiles()
         blurryPhotos = deriveBlurrySingles()
     }
 
-    /// Standalone stills that look clearly soft. Conservative and surfacing-only:
-    /// these are never pre-selected for deletion. Excludes favorites and any
-    /// asset already grouped into a duplicate stack (so it isn't shown twice).
+    /// Actual "big files": measures real on-disk size for the bounded candidate
+    /// pool, keeps only those at or above the size floor, sorts largest-first and
+    /// caps the count. Measuring here (not in the view) keeps the home card's
+    /// count consistent with what the screen shows.
+    private func computeBigFiles() -> [PhotoAsset] {
+        let candidates = library.fetchLargeFileCandidates(stillLimit: config.bigFileCandidateStillLimit)
+        guard !candidates.isEmpty else { return [] }
+        let sizes = library.fileSizes(for: candidates.map(\.id))
+        return candidates
+            .filter { (sizes[$0.id] ?? 0) >= config.bigFileMinBytes }
+            .sorted { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
+            .prefix(config.bigFileDisplayLimit)
+            .map { $0 }
+    }
+
+    /// Standalone stills that look soft. Conservative, RELATIVE, and
+    /// surfacing-only: never pre-selected for deletion. Excludes favorites and
+    /// anything already grouped into a duplicate stack (so it isn't shown twice).
+    ///
+    /// A photo qualifies only when its sharpness is below BOTH an absolute
+    /// ceiling AND the library's low-percentile floor — then capped. Because
+    /// Laplacian sharpness scale varies by device and downscale, an absolute
+    /// cutoff alone can flag everything; combining it with a percentile bounds
+    /// the category to genuinely-relative-worst shots and never the whole library.
     private func deriveBlurrySingles() -> [PhotoAsset] {
         let grouped = Set(stacks.flatMap { $0.assets.map(\.id) })
-        return analysedAssets
-            .filter { asset in
-                guard asset.mediaType == .image, !asset.isFavorite else { return false }
-                guard !grouped.contains(asset.id) else { return false }
-                guard let sharpness = asset.score?.sharpness else { return false }
-                return sharpness <= config.blurrySinglesSharpnessCeiling
-            }
+        let eligible = analysedAssets.filter { asset in
+            asset.mediaType == .image
+                && !asset.isFavorite
+                && !grouped.contains(asset.id)
+                && asset.score != nil
+        }
+        guard !eligible.isEmpty else { return [] }
+
+        // Relative floor: the sharpness value at the configured low percentile.
+        let sortedSharpness = eligible.compactMap { $0.score?.sharpness }.sorted()
+        let percentileIndex = Int(Double(sortedSharpness.count - 1) * config.blurryPercentile)
+        let percentileFloor = sortedSharpness[max(0, percentileIndex)]
+
+        // Flag only photos below BOTH the relative floor and the absolute ceiling.
+        let cutoff = min(percentileFloor, config.blurrySinglesSharpnessCeiling)
+        return eligible
+            .filter { ($0.score?.sharpness ?? 1) <= cutoff }
             .sorted { ($0.score?.sharpness ?? 0) < ($1.score?.sharpness ?? 0) }
+            .prefix(config.blurryMaxCount)
+            .map { $0 }
     }
 
     /// Debounced heavy recompute: re-clusters stacks from the current working

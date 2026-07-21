@@ -41,10 +41,16 @@ struct AssetCleanupScreen: View {
 
     // MARK: Derived display list
 
-    /// The assets actually shown: optionally sorted largest-file-first once
-    /// sizes are known, then capped to the category's display limit.
+    /// The assets actually shown: an optional size floor (applied once sizes are
+    /// measured), then optionally sorted largest-file-first, then capped to the
+    /// category's display limit.
     private var displayed: [PhotoAsset] {
         var list = assets
+        // Size floor — only enforced once we've measured sizes, so nothing is
+        // hidden while the measurement is still in flight.
+        if let floor = category.minDisplayBytes, !sizes.isEmpty {
+            list = list.filter { (sizes[$0.id] ?? 0) >= floor }
+        }
         if category.sortsBySizeDescending, !sizes.isEmpty {
             list.sort { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
         }
@@ -56,7 +62,7 @@ struct AssetCleanupScreen: View {
 
     var body: some View {
         Group {
-            if assets.isEmpty {
+            if displayed.isEmpty {
                 emptyState
             } else {
                 grid

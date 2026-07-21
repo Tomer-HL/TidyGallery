@@ -87,12 +87,18 @@ struct ShotScorer {
         )
     }
 
-    /// Convenience: build all actionable stacks from clusters.
+    /// Convenience: build all multi-photo stacks from clusters.
+    ///
+    /// Every group of 2+ near-duplicates is returned — even when none of them is
+    /// *clearly* worse than the winner (so nothing gets pre-selected). Hiding a
+    /// stack just because the app can't confidently recommend a deletion would
+    /// make real duplicates invisible; instead we surface the group with the
+    /// best shot highlighted and let the user pick. `makeStack` already returns
+    /// `nil` for single-photo clusters, so those never appear.
     func makeStacks(
         from clusters: [[PhotoAsset.ID]],
         assetsByID: [PhotoAsset.ID: PhotoAsset]
     ) -> [PhotoStack] {
         clusters.compactMap { makeStack(from: $0, assetsByID: assetsByID) }
-                .filter(\.isActionable)
     }
 }

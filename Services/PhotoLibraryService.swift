@@ -226,18 +226,20 @@ final class PhotoLibraryService {
         assets.enumerateObjects { asset, _, _ in
             let snapshot = Self.snapshot(asset)
             if asset.mediaSubtypes.contains(.photoLive) {
-                livePhotos.append(snapshot)                  // always include Live Photos
+                livePhotos.append(snapshot)                  // Live Photos carry a video → often large
             } else {
                 stills.append(snapshot)
             }
         }
 
-        // Highest pixel area first (a cheap proxy for file size), capped.
-        let topStills = stills
-            .sorted { ($0.pixelWidth * $0.pixelHeight) > ($1.pixelWidth * $1.pixelHeight) }
-            .prefix(stillLimit)
-
-        return livePhotos + Array(topStills)
+        // Highest pixel area first (a cheap proxy for file size), each capped so
+        // the caller's exact-size measurement stays bounded on huge libraries.
+        func topByArea(_ list: [PhotoAsset]) -> [PhotoAsset] {
+            list.sorted { ($0.pixelWidth * $0.pixelHeight) > ($1.pixelWidth * $1.pixelHeight) }
+                .prefix(stillLimit)
+                .map { $0 }
+        }
+        return topByArea(livePhotos) + topByArea(stills)
     }
 
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`

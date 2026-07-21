@@ -3,9 +3,10 @@
 //  TidyGalleryTests
 //
 //  The clustering step is where correctness AND scalability live. These tests
-//  pin the two behaviours the design promises: (1) a time gap larger than the
-//  burst window splits assets into separate stacks even if they look identical,
-//  and (2) within the window, only visually-similar photos merge.
+//  pin the behaviours the design promises: (1) visually-similar photos taken
+//  across a shooting session (seconds to minutes apart) merge, (2) photos more
+//  than the time window apart do NOT merge, and (3) within range, only
+//  visually-similar photos merge.
 //
 
 import Testing
@@ -15,7 +16,7 @@ import Foundation
 @Suite("StackBuilder clustering")
 struct StackBuilderTests {
 
-    private let config = AnalysisConfiguration.default   // 10s window, 0.55 sim
+    private let config = AnalysisConfiguration.default   // 30-min window, 0.45 sim
     private var builder: StackBuilder { StackBuilder(config: config) }
 
     /// Helper: does any returned cluster contain exactly this id set?
@@ -34,11 +35,25 @@ struct StackBuilderTests {
         #expect(hasCluster(clusters, ["a", "b"]))
     }
 
-    @Test("Identical photos MORE than 10s apart do NOT merge (time gate)")
-    func timeGateSplits() {
+    @Test("Similar photos spread across a session (30s+ apart) DO merge")
+    func sessionSpreadMerges() {
+        // The old 10s gate missed these real-world duplicates; the session-aware
+        // search should now group them.
         let print = FeaturePrint(vector: [1, 0, 0])
         let a = PhotoAsset.make(id: "a", secondsFromEpoch: 100, featurePrint: print)
-        let b = PhotoAsset.make(id: "b", secondsFromEpoch: 130, featurePrint: print) // +30s
+        let b = PhotoAsset.make(id: "b", secondsFromEpoch: 160, featurePrint: print) // +60s
+
+        let clusters = builder.cluster([a, b])
+        #expect(clusters.count == 1)
+        #expect(hasCluster(clusters, ["a", "b"]))
+    }
+
+    @Test("Identical photos MORE than the time window apart do NOT merge")
+    func farApartInTimeSplits() {
+        let print = FeaturePrint(vector: [1, 0, 0])
+        let a = PhotoAsset.make(id: "a", secondsFromEpoch: 100, featurePrint: print)
+        // Beyond the 30-minute window (1800s).
+        let b = PhotoAsset.make(id: "b", secondsFromEpoch: 100 + 2000, featurePrint: print)
 
         let clusters = builder.cluster([a, b])
         #expect(clusters.count == 2)
