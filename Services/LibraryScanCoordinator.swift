@@ -87,6 +87,15 @@ final class LibraryScanCoordinator {
     /// Background task computing `storageSummary` (sizes measured off-main).
     private var summaryTask: Task<Void, Never>?
 
+    // Raw results of the last library enumeration, before the ignore list is
+    // applied. Retained so a cheap re-filter doesn't need to walk the library
+    // again (see `refreshDerivedCategories`).
+    private var rawScreenshots: [PhotoAsset] = []
+    private var rawVideos: [PhotoAsset] = []
+    private var rawRecordings: [PhotoAsset] = []
+    private var rawBigFiles: [PhotoAsset] = []
+    private var rawExactDuplicateExtras: [PhotoAsset] = []
+
     // MARK: Collaborators
 
     private let library: PhotoLibraryService
@@ -265,20 +274,39 @@ final class LibraryScanCoordinator {
     /// Recomputes every standalone cleanup category. Cheap metadata fetches plus
     /// the blurry-singles derivation from already-analysed assets; safe to call
     /// after a full scan and after each library delta.
+    /// Full refresh: re-enumerate the library, then re-derive everything.
+    /// Used after a scan, a library change, or a settings change.
     private func refreshCategories() {
+        // One pass yields both videos and the screen-recording subset; fetching
+        // them separately walked every video twice, with a PHAssetResource
+        // lookup each time.
+        let (videos, recordings) = library.fetchVideosAndScreenRecordings()
+        rawScreenshots = library.fetchScreenshots()
+        rawVideos = videos
+        rawRecordings = recordings
+        rawBigFiles = computeBigFiles()
+        refreshDerivedCategories()
+    }
+
+    /// Cheap refresh: re-filter the last enumeration and re-derive.
+    ///
+    /// Ignoring a photo used to trigger a full `refreshCategories()`, which
+    /// re-enumerated the entire library just to hide one asset. Everything here
+    /// works from lists already in memory.
+    private func refreshDerivedCategories() {
         // Every category is filtered through `suggestable`, so a photo the user
         // chose to keep never reappears as a suggestion anywhere.
-        screenshots = suggestable(library.fetchScreenshots())
-        largeVideos = suggestable(library.fetchVideos())
-        screenRecordings = suggestable(library.fetchScreenRecordings())
-        bigFileCandidates = suggestable(computeBigFiles())
-        blurryPhotos = suggestable(deriveBlurrySingles())
+        screenshots = suggestable(rawScreenshots)
+        largeVideos = suggestable(rawVideos)
+        screenRecordings = suggestable(rawRecordings)
+        bigFileCandidates = suggestable(rawBigFiles)
+        exactDuplicateExtras = suggestable(rawExactDuplicateExtras)
+        blurryPhotos = deriveBlurrySingles()
         foodPhotos = photosTagged(.food)
         petPhotos = photosTagged(.pets)
         documentPhotos = photosTagged(.documents)
         naturePhotos = photosTagged(.nature)
         selfiePhotos = photosTagged(.selfies)
-        exactDuplicateExtras = suggestable(exactDuplicateExtras)
         stripIgnoredFromStackPreselections()
         recommendedAssets = recommendedDeletions()
         ignoredAssets = library.snapshots(for: Array(ignoredIDs))
@@ -353,6 +381,7 @@ final class LibraryScanCoordinator {
     ) {
         totalLibraryBytes = total
         exactDuplicateGroups = groups
+        rawExactDuplicateExtras = extras
         // Respect "don't suggest again" for copies found by the background pass.
         exactDuplicateExtras = suggestable(extras)
         recommendedAssets = recommendedDeletions()
@@ -520,7 +549,8 @@ final class LibraryScanCoordinator {
         guard !ids.isEmpty else { return }
         try? await ignoreList.ignore(ids: ids)
         ignoredIDs.formUnion(ids)
-        refreshCategories()
+        // Cheap: re-filter what we already have, no library enumeration.
+        refreshDerivedCategories()
     }
 
     /// Stop ignoring assets — they become eligible for suggestions again.
@@ -528,9 +558,10 @@ final class LibraryScanCoordinator {
         guard !ids.isEmpty else { return }
         try? await ignoreList.unignore(ids: ids)
         ignoredIDs.subtract(ids)
-        // The assets have to be re-derived from the library, so do a full pass.
+        // Restoring can re-open duplicate suggestions, so re-cluster — but the
+        // raw library lists are still valid, so no re-enumeration is needed.
         stacks = buildStacks(from: analysedAssets)
-        refreshCategories()
+        refreshDerivedCategories()
     }
 
     /// Drop deleted assets from existing stacks without re-clustering. A stack
@@ -586,6 +617,9 @@ final class LibraryScanCoordinator {
             }
 
             var freshlyAnalysed = 0
+            var pending: [AnalysisCacheStore.Entry] = []
+            pending.reserveCapacity(toAnalyse.count)
+
             while let (index, result) = try await group.next() {
                 inFlight -= 1
                 if let result {
@@ -593,14 +627,17 @@ final class LibraryScanCoordinator {
                     enriched[index].score = result.score
                     enriched[index].sceneTags = result.sceneTags
                     freshlyAnalysed += 1
-                    // 3. Persist (fire-and-forget within the group's lifetime).
+                    // 3. Collect for a single batched write below — persisting
+                    // per photo meant a disk write for every image in the library.
                     let asset = enriched[index]
-                    try? await cache.store(
-                        id: asset.id,
-                        modificationDate: asset.modificationDate,
-                        featurePrint: result.featurePrint,
-                        score: result.score,
-                        sceneTags: result.sceneTags
+                    pending.append(
+                        .init(
+                            id: asset.id,
+                            modificationDate: asset.modificationDate,
+                            featurePrint: result.featurePrint,
+                            score: result.score,
+                            sceneTags: result.sceneTags
+                        )
                     )
                 }
                 // Refill.
@@ -608,6 +645,8 @@ final class LibraryScanCoordinator {
                     addTask(next); inFlight += 1
                 }
             }
+
+            try? await cache.storeBatch(pending)
             return (enriched, freshlyAnalysed)
         }
     }

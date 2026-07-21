@@ -230,6 +230,24 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 11 (scan performance): four fixes, in rough order of impact.
+
+1. **Batched cache writes.** `store` issued a fetch *and* a `save()` per photo,
+   so a 20k library meant 20k queries and 20k disk writes. `storeBatch` collapses
+   each page to one query and one write — by far the biggest win.
+2. **One Vision pass per photo.** Feature print, faces and classification now
+   share a single `VNImageRequestHandler.perform`. Classification previously ran
+   in its own handler, and every handler re-processes the image, so this roughly
+   halves the Vision work. Classification is optional, so a failed batch retries
+   with just the required pair.
+3. **One video enumeration.** `fetchVideosAndScreenRecordings` returns both in a
+   single pass; they were previously fetched separately, walking every video
+   twice and repeating the `PHAssetResource` lookup each time.
+4. **Cheap re-filtering.** Refreshing is split into a full pass (re-enumerate,
+   then derive) and a derived-only pass (re-filter lists already in memory).
+   Ignoring a photo used to re-enumerate the entire library just to hide one
+   asset; now it only re-filters.
+
 Phase 10 (hardening): the scan coordinator is bound to Photos, Vision and
 SwiftData, so testing it directly would mean heavy mocking. Instead the
 *derivation* logic — the part that actually decides what the user sees — was

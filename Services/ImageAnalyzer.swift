@@ -67,9 +67,19 @@ actor ImageAnalyzer {
 
         let featurePrintRequest = VNGenerateImageFeaturePrintRequest()
         let faceRequest = VNDetectFaceLandmarksRequest()
+        let classifyRequest = VNClassifyImageRequest()
 
-        // Feature print + faces run in a single classic-API handler pass.
-        try handler.perform([featurePrintRequest, faceRequest])
+        // Feature print, faces AND classification in ONE handler pass. Each
+        // handler re-processes the image, so running classification separately
+        // doubled the Vision work per photo. Classification is optional, so if
+        // including it upsets the batch we retry with just the required pair.
+        var classificationSucceeded = true
+        do {
+            try handler.perform([featurePrintRequest, faceRequest, classifyRequest])
+        } catch {
+            classificationSucceeded = false
+            try handler.perform([featurePrintRequest, faceRequest])
+        }
 
         guard
             let observation = featurePrintRequest.results?.first as? VNFeaturePrintObservation,
@@ -85,8 +95,10 @@ actor ImageAnalyzer {
         // On-device aesthetics via the newer async Vision request (best-effort).
         let aesthetics = await Self.aestheticsScore(for: image)
 
-        // On-device content classification (best-effort; empty on failure).
-        var sceneTags = classifyScene(image: image)
+        // Content categories from the classification results gathered above.
+        var sceneTags = classificationSucceeded
+            ? sceneCategories(from: classifyRequest.results ?? [])
+            : []
         // Selfies come from face geometry, not a classifier label: one or more
         // faces large enough to fill a good part of the frame.
         if Self.isSelfie(faces: faces, minFaceAreaFraction: config.selfieMinFaceAreaFraction) {
@@ -108,15 +120,9 @@ actor ImageAnalyzer {
     /// into our high-level `SceneCategory` set. Best-effort and isolated in its
     /// own request handler so a classification failure never affects the required
     /// feature print. Returns an empty set on any failure.
-    private func classifyScene(image: CGImage) -> Set<SceneCategory> {
-        let request = VNClassifyImageRequest()
-        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            return []
-        }
-        let observations = request.results ?? []
+    private func sceneCategories(
+        from observations: [VNClassificationObservation]
+    ) -> Set<SceneCategory> {
         // Take the strongest few labels above a low floor rather than applying a
         // high absolute confidence gate: this classifier spreads confidence
         // across a very large taxonomy, so correct labels often score low.

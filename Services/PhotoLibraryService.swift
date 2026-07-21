@@ -180,6 +180,31 @@ final class PhotoLibraryService {
         return result
     }
 
+    /// Videos **and** the subset that are screen recordings, in a single pass.
+    ///
+    /// Fetching these separately meant enumerating every video twice and doing
+    /// the (not cheap) `PHAssetResource` lookup for each one again. Callers that
+    /// need both should use this.
+    func fetchVideosAndScreenRecordings() -> (videos: [PhotoAsset], recordings: [PhotoAsset]) {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.includeHiddenAssets = false
+        let assets = PHAsset.fetchAssets(with: .video, options: options)
+
+        var videos: [PhotoAsset] = []
+        var recordings: [PhotoAsset] = []
+        videos.reserveCapacity(assets.count)
+
+        assets.enumerateObjects { asset, _, _ in
+            let snapshot = Self.snapshot(asset)
+            videos.append(snapshot)
+            let isScreenRecording = PHAssetResource.assetResources(for: asset)
+                .contains { $0.originalFilename.lowercased().hasPrefix("rpreplay") }
+            if isScreenRecording { recordings.append(snapshot) }
+        }
+        return (videos, recordings)
+    }
+
     /// Screen recordings, detected heuristically. iOS exposes no public
     /// smart-album subtype for them, so we match ReplayKit's filename signature:
     /// Control-Center recordings are written as `RPReplay_Final…​.mp4` /

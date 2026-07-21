@@ -52,6 +52,47 @@ actor AnalysisCacheStore {
         return result
     }
 
+    /// One asset's analysis, ready to persist.
+    struct Entry: Sendable {
+        let id: String
+        let modificationDate: Date?
+        let featurePrint: FeaturePrint
+        let score: ShotScore
+        let sceneTags: Set<SceneCategory>
+    }
+
+    /// Upsert a whole page of results in **one** transaction.
+    ///
+    /// This matters a lot: the per-asset `store` below issues a fetch *and* a
+    /// `save()` for every photo, so scanning a 20k library meant 20k queries and
+    /// 20k disk writes. Batching collapses that to one query and one write per
+    /// page, which is the single biggest win in the scan pipeline.
+    func storeBatch(_ entries: [Entry]) throws {
+        guard !entries.isEmpty else { return }
+
+        // Clear any existing rows for these ids in a single query.
+        let ids = entries.map(\.id)
+        let descriptor = FetchDescriptor<CachedAnalysis>(
+            predicate: #Predicate { ids.contains($0.localIdentifier) }
+        )
+        for row in try modelContext.fetch(descriptor) {
+            modelContext.delete(row)
+        }
+
+        for entry in entries {
+            modelContext.insert(
+                try CachedAnalysis.make(
+                    localIdentifier: entry.id,
+                    modificationDate: entry.modificationDate,
+                    featurePrint: entry.featurePrint,
+                    score: entry.score,
+                    sceneTags: entry.sceneTags
+                )
+            )
+        }
+        try modelContext.save()   // one write for the whole page
+    }
+
     /// Upsert one asset's analysis. Replaces any existing row for the id.
     func store(
         id: String,
