@@ -2,18 +2,24 @@
 //  CleanupHomeView.swift
 //  TidyGallery
 //
-//  The post-scan home dashboard. A summary card up top shows how much space is
-//  reclaimable; below it, cleanup categories are grouped into sections
-//  ("Reclaim space", "Clutter", "By content"). "Duplicates" leads to the
-//  best-shot review flow; the standalone categories each open a reusable
-//  `AssetCleanupScreen`. Cards show a live count and dim to a dead-end only when
-//  empty.
+//  The post-scan home dashboard. A summary card up top shows a storage ring
+//  (where reclaimable space lives, against the rest of the library), the total
+//  library size, a one-tap "Recommended cleanup", and a per-category breakdown.
+//  Below it, cleanup categories are grouped into sections ("Reclaim space",
+//  "Clutter", "By content"). "Duplicates" leads to the best-shot review flow;
+//  standalone categories each open a reusable `AssetCleanupScreen`.
 //
 
 import SwiftUI
 
 struct CleanupHomeView: View {
     let coordinator: LibraryScanCoordinator
+
+    // Colours shared by the ring segments and the breakdown legend.
+    private let colorDuplicates = Theme.Colors.accent
+    private let colorVideos = Theme.Colors.best
+    private let colorBigFiles = Theme.Colors.destructive
+    private let colorRecordings = Color.teal
 
     var body: some View {
         NavigationStack {
@@ -51,27 +57,28 @@ struct CleanupHomeView: View {
     private var summaryCard: some View {
         let summary = coordinator.storageSummary
         return VStack(alignment: .leading, spacing: Theme.Spacing.m) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Up to")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                Text(summary.reclaimableBytes > 0
-                     ? summary.reclaimableBytes.formatted(.byteCount(style: .file))
-                     : "0 KB")
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                    .monospacedDigit()
-                Text("reclaimable across duplicates, videos, and large files")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Colors.textSecondary)
+            StorageRingView(summary: summary, totalLibraryBytes: coordinator.totalLibraryBytes)
+                .frame(maxWidth: .infinity)
+
+            Group {
+                if let total = coordinator.totalLibraryBytes {
+                    Text("of \(total.formatted(.byteCount(style: .file))) in your library")
+                } else {
+                    Text("Measuring library size…")
+                }
             }
+            .font(.caption)
+            .foregroundStyle(Theme.Colors.textSecondary)
+            .frame(maxWidth: .infinity)
+
+            recommendedButton
 
             if summary.hasReclaimableSpace {
                 VStack(spacing: Theme.Spacing.xs) {
-                    breakdownRow("Duplicates", summary.duplicates)
-                    breakdownRow("Large videos", summary.largeVideos)
-                    breakdownRow("Big files", summary.bigFiles)
-                    breakdownRow("Screen recordings", summary.screenRecordings)
+                    breakdownRow("Duplicates", summary.duplicates, colorDuplicates)
+                    breakdownRow("Large videos", summary.largeVideos, colorVideos)
+                    breakdownRow("Big files", summary.bigFiles, colorBigFiles)
+                    breakdownRow("Screen recordings", summary.screenRecordings, colorRecordings)
                 }
             }
 
@@ -88,9 +95,43 @@ struct CleanupHomeView: View {
     }
 
     @ViewBuilder
-    private func breakdownRow(_ title: String, _ item: StorageSummary.LineItem) -> some View {
+    private var recommendedButton: some View {
+        let recommended = coordinator.recommendedAssets
+        if !recommended.isEmpty {
+            NavigationLink {
+                AssetCleanupScreen(
+                    category: .recommended,
+                    assets: recommended,
+                    initiallySelected: Set(recommended.map(\.id)),
+                    onDeleted: { coordinator.noteDeleted(ids: $0) }
+                )
+            } label: {
+                HStack(spacing: Theme.Spacing.s) {
+                    Image(systemName: "wand.and.stars")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Recommended cleanup")
+                            .font(.headline)
+                        Text("\(recommended.count) safe duplicate\(recommended.count == 1 ? "" : "s") to review")
+                            .font(.caption)
+                            .opacity(0.9)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .padding(Theme.Spacing.m)
+                .frame(maxWidth: .infinity)
+                .background(Theme.Colors.accent, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func breakdownRow(_ title: String, _ item: StorageSummary.LineItem, _ color: Color) -> some View {
         if item.bytes > 0 {
-            HStack {
+            HStack(spacing: Theme.Spacing.s) {
+                Circle().fill(color).frame(width: 9, height: 9)
                 Text(title)
                     .font(.subheadline)
                     .foregroundStyle(Theme.Colors.textSecondary)

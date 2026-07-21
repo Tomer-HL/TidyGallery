@@ -375,6 +375,30 @@ final class PhotoLibraryService {
         return sizes
     }
 
+    /// Total on-disk size of the whole library (photos + videos), for the
+    /// dashboard's "of X used" reference figure.
+    ///
+    /// `nonisolated` on purpose: this sums a `fileSize` resource lookup for every
+    /// asset, which is heavy on a large library. The Photos read APIs used here
+    /// are thread-safe, so we run it off the main actor (kicked off in the
+    /// background once per scan) to avoid blocking the UI. It never mutates
+    /// anything and touches no main-actor state.
+    nonisolated func totalLibraryBytes() async -> Int64 {
+        let options = PHFetchOptions()
+        options.includeHiddenAssets = false
+        let assets = PHAsset.fetchAssets(with: options)
+
+        var total: Int64 = 0
+        assets.enumerateObjects { asset, _, _ in
+            for resource in PHAssetResource.assetResources(for: asset) {
+                if let number = resource.value(forKey: "fileSize") as? NSNumber {
+                    total += number.int64Value
+                }
+            }
+        }
+        return total
+    }
+
     // MARK: - Deletion (Phase 2 entry point — kept here for cohesion)
 
     /// Deletes assets by identifier. **This is the only method that removes

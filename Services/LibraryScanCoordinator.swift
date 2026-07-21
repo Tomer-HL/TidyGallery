@@ -65,6 +65,17 @@ final class LibraryScanCoordinator {
     /// Reclaimable-space breakdown for the home dashboard.
     private(set) var storageSummary: StorageSummary = .empty
 
+    /// The engine's confident, conservative recommendations: the pre-selected
+    /// near-duplicate photos across all stacks, flattened for one-tap cleanup.
+    private(set) var recommendedAssets: [PhotoAsset] = []
+
+    /// Total on-disk size of the whole library, measured off-main once per scan.
+    /// `nil` until the background measurement finishes.
+    private(set) var totalLibraryBytes: Int64?
+
+    /// Background task computing `totalLibraryBytes`.
+    private var totalSizeTask: Task<Void, Never>?
+
     // MARK: Collaborators
 
     private let library: PhotoLibraryService
@@ -142,6 +153,7 @@ final class LibraryScanCoordinator {
         let stacks = buildStacks(from: enriched)
         self.stacks = stacks
         refreshCategories()
+        measureTotalLibrarySize()
         phase = .finished(stackCount: stacks.count)
 
         startObserving()
@@ -229,7 +241,27 @@ final class LibraryScanCoordinator {
         documentPhotos = photosTagged(.documents)
         naturePhotos = photosTagged(.nature)
         selfiePhotos = photosTagged(.selfies)
+        recommendedAssets = recommendedDeletions()
         storageSummary = computeStorageSummary()
+    }
+
+    /// The pre-selected near-duplicate photos across all stacks (the engine's
+    /// safe, conservative deletion suggestions), flattened into one list.
+    private func recommendedDeletions() -> [PhotoAsset] {
+        stacks.flatMap { stack in
+            stack.assets.filter { stack.assetsPreselectedForDeletion.contains($0.id) }
+        }
+    }
+
+    /// Kick off the (heavy, off-main) total-library-size measurement. Runs once
+    /// per full scan; the result populates `totalLibraryBytes` when ready.
+    private func measureTotalLibrarySize() {
+        totalSizeTask?.cancel()
+        totalSizeTask = Task { [weak self, library] in
+            let total = await library.totalLibraryBytes()
+            guard !Task.isCancelled else { return }
+            self?.totalLibraryBytes = total
+        }
     }
 
     /// Measures reclaimable space across the size-heavy categories in one bounded
@@ -353,6 +385,7 @@ final class LibraryScanCoordinator {
         naturePhotos.removeAll { removed.contains($0.id) }
         selfiePhotos.removeAll { removed.contains($0.id) }
         pruneStacks(removing: removed)
+        recommendedAssets = recommendedDeletions()
         storageSummary = computeStorageSummary()
         phase = .finished(stackCount: stacks.count)
     }

@@ -27,6 +27,7 @@ struct CleanupCategory: Identifiable, Hashable {
         case documents
         case nature
         case selfies
+        case recommended
     }
 
     let kind: Kind
@@ -192,6 +193,20 @@ struct CleanupCategory: Identifiable, Hashable {
         blurb: "Close-up portraits, detected from face size",
         emptyTitle: "No selfies",
         emptySubtitle: "We didn't detect any selfies to review.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let recommended = CleanupCategory(
+        kind: .recommended,
+        title: "Recommended cleanup",
+        systemImage: "wand.and.stars",
+        noun: "photo",
+        blurb: "The safe near-duplicates we suggest removing",
+        emptyTitle: "Nothing to recommend",
+        emptySubtitle: "There are no confident duplicate suggestions right now.",
         isVideo: false,
         sortsBySizeDescending: false,
         displayLimit: nil,

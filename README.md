@@ -223,3 +223,13 @@ videos, Big files, Screen recordings), **Clutter** (Screenshots, Possibly
 blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summary
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
+
+The dashboard also shows a **storage ring** (Swift Charts `SectorMark` donut,
+`StorageRingView`) visualising where reclaimable space lives against the rest of
+the library, the **total library size** (`PhotoLibraryService.totalLibraryBytes`,
+a `nonisolated` sum of every asset's on-disk size measured off-main once per scan
+so it never blocks the UI), and a one-tap **Recommended cleanup** — the engine's
+conservative pre-selected near-duplicates, opened pre-checked in the shared
+`AssetCleanupScreen` (which gained an `initiallySelected` parameter). Recommended
+cleanup still requires the user to confirm; nothing about the safety model
+changes.

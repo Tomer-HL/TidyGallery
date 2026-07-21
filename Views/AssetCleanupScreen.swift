@@ -21,7 +21,7 @@ struct AssetCleanupScreen: View {
     @State private var assets: [PhotoAsset]
     @Environment(\.photoLibrary) private var library
 
-    @State private var selected: Set<PhotoAsset.ID> = []
+    @State private var selected: Set<PhotoAsset.ID>
     @State private var sizes: [PhotoAsset.ID: Int64] = [:]
     @State private var showConfirm = false
     @State private var isDeleting = false
@@ -32,11 +32,14 @@ struct AssetCleanupScreen: View {
     init(
         category: CleanupCategory,
         assets: [PhotoAsset],
+        initiallySelected: Set<PhotoAsset.ID> = [],
         onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in }
     ) {
         self.category = category
         self.onDeleted = onDeleted
         _assets = State(initialValue: assets)
+        // Recommended cleanup pre-checks its items; other categories start empty.
+        _selected = State(initialValue: initiallySelected.intersection(assets.map(\.id)))
     }
 
     // MARK: Derived display list
