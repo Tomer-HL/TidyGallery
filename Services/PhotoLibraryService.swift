@@ -450,8 +450,9 @@ final class PhotoLibraryService {
         guard !ids.isEmpty else { return }
         try await PHPhotoLibrary.shared().performChanges {
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
-            guard let request = PHAssetCollectionChangeRequest
-                .creationRequestForAssetCollection(withTitle: title) else { return }
+            // Note: this returns a NON-optional in Swift, so no `guard let`.
+            let request = PHAssetCollectionChangeRequest
+                .creationRequestForAssetCollection(withTitle: title)
             request.addAssets(assets)
         }
     }
