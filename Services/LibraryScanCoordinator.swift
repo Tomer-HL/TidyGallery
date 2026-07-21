@@ -370,51 +370,28 @@ final class LibraryScanCoordinator {
     /// group's best shot) to match the card's "up to X" framing. The conservative
     /// pre-selected subset remains what "Recommended cleanup" acts on.
     private func refreshStorageSummary() {
-        let duplicateIDs = Set(stacks.flatMap { stack in
-            stack.assets.map(\.id).filter { $0 != stack.bestShotID }
-        })
-        let exactIDs = Set(exactDuplicateExtras.map(\.id))
-        let videoIDs = largeVideos.map(\.id)
-        let bigFileIDs = bigFileCandidates.map(\.id)
-        let recordingIDs = screenRecordings.map(\.id)
-        let screenshotIDs = screenshots.map(\.id)
+        let input = StorageSummaryBuilder.Input(
+            exactDuplicateIDs: Set(exactDuplicateExtras.map(\.id)),
+            duplicateIDs: Set(stacks.flatMap { stack in
+                stack.assets.map(\.id).filter { $0 != stack.bestShotID }
+            }),
+            videoIDs: Set(largeVideos.map(\.id)),
+            bigFileIDs: Set(bigFileCandidates.map(\.id)),
+            recordingIDs: Set(screenRecordings.map(\.id)),
+            screenshotIDs: Set(screenshots.map(\.id))
+        )
 
-        let unionIDs = duplicateIDs
-            .union(exactIDs)
-            .union(videoIDs)
-            .union(bigFileIDs)
-            .union(recordingIDs)
-            .union(screenshotIDs)
-
-        guard !unionIDs.isEmpty else {
+        guard !input.isEmpty else {
             summaryTask?.cancel()
             storageSummary = .empty
             return
         }
 
-        let videoCount = largeVideos.count
-        let bigFileCount = bigFileCandidates.count
-        let recordingCount = screenRecordings.count
-        let screenshotCount = screenshots.count
-
         summaryTask?.cancel()
         summaryTask = Task { [weak self, library] in
-            let sizes = await library.assetFileSizes(for: Array(unionIDs))
+            let sizes = await library.assetFileSizes(for: Array(input.unionIDs))
             guard !Task.isCancelled else { return }
-
-            func bytes<S: Sequence>(_ ids: S) -> Int64 where S.Element == String {
-                ids.reduce(0) { $0 + (sizes[$1] ?? 0) }
-            }
-
-            self?.storageSummary = StorageSummary(
-                reclaimableBytes: bytes(unionIDs),
-                exactDuplicates: .init(count: exactIDs.count, bytes: bytes(exactIDs)),
-                duplicates: .init(count: duplicateIDs.count, bytes: bytes(duplicateIDs)),
-                largeVideos: .init(count: videoCount, bytes: bytes(videoIDs)),
-                bigFiles: .init(count: bigFileCount, bytes: bytes(bigFileIDs)),
-                screenRecordings: .init(count: recordingCount, bytes: bytes(recordingIDs)),
-                screenshots: .init(count: screenshotCount, bytes: bytes(screenshotIDs))
-            )
+            self?.storageSummary = StorageSummaryBuilder.build(input, sizes: sizes)
         }
     }
 
@@ -455,26 +432,8 @@ final class LibraryScanCoordinator {
     /// the category to genuinely-relative-worst shots and never the whole library.
     private func deriveBlurrySingles() -> [PhotoAsset] {
         let grouped = Set(stacks.flatMap { $0.assets.map(\.id) })
-        let eligible = analysedAssets.filter { asset in
-            asset.mediaType == .image
-                && !asset.isFavorite
-                && !grouped.contains(asset.id)
-                && asset.score != nil
-        }
-        guard !eligible.isEmpty else { return [] }
-
-        // Relative floor: the sharpness value at the configured low percentile.
-        let sortedSharpness = eligible.compactMap { $0.score?.sharpness }.sorted()
-        let percentileIndex = Int(Double(sortedSharpness.count - 1) * config.blurryPercentile)
-        let percentileFloor = sortedSharpness[max(0, percentileIndex)]
-
-        // Flag only photos below BOTH the relative floor and the absolute ceiling.
-        let cutoff = min(percentileFloor, config.blurrySinglesSharpnessCeiling)
-        return eligible
-            .filter { ($0.score?.sharpness ?? 1) <= cutoff }
-            .sorted { ($0.score?.sharpness ?? 0) < ($1.score?.sharpness ?? 0) }
-            .prefix(config.blurryMaxCount)
-            .map { $0 }
+        return BlurrySinglesSelector(config: config)
+            .select(from: analysedAssets, excluding: grouped.union(ignoredIDs))
     }
 
     /// Debounced heavy recompute: re-clusters stacks from the current working
@@ -578,19 +537,7 @@ final class LibraryScanCoordinator {
     /// that falls to a single photo is removed (no longer a cleanup group); if
     /// the best shot was deleted, the top surviving ranked photo inherits it.
     private func pruneStacks(removing removed: Set<PhotoAsset.ID>) {
-        stacks = stacks.compactMap { stack in
-            let remaining = stack.assets.filter { !removed.contains($0.id) }
-            guard remaining.count > 1 else { return nil }
-            let ranked = stack.rankedAssetIDs.filter { !removed.contains($0) }
-            let best = removed.contains(stack.bestShotID) ? (ranked.first ?? remaining[0].id) : stack.bestShotID
-            return PhotoStack(
-                id: stack.id,
-                assets: remaining,
-                bestShotID: best,
-                rankedAssetIDs: ranked,
-                assetsPreselectedForDeletion: stack.assetsPreselectedForDeletion.subtracting(removed)
-            )
-        }
+        stacks = stacks.compactMap { $0.removing(removed) }
     }
 
     // MARK: - Per-page processing

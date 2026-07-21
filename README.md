@@ -230,6 +230,25 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 10 (hardening): the scan coordinator is bound to Photos, Vision and
+SwiftData, so testing it directly would mean heavy mocking. Instead the
+*derivation* logic — the part that actually decides what the user sees — was
+extracted into pure value types that need no mocking at all:
+
+- `BlurrySinglesSelector` — the relative percentile-plus-ceiling rule, with
+  tests proving a uniformly-soft library is still bounded, a sharp library flags
+  nothing, favorites are excluded, and the hard cap holds.
+- `StorageSummaryBuilder` — reclaimable-space maths. Its tests pin the subtle
+  part: categories OVERLAP (a big screenshot is both), so the headline total is
+  computed over the de-duplicated union while line items report their own ids.
+  Summing the lines would overstate what deleting actually frees.
+- `PhotoStack.removing(_:)` — pruning after deletion, with tests that a stack
+  dissolves below two photos and the best shot is always a surviving asset.
+
+`TuningSettings` is covered too, including tolerant decoding (a settings blob
+saved before a knob existed must not wipe the user's other choices) and the
+re-scan classification. This left the coordinator thinner as a side effect.
+
 Phase 9 (on-device tuning): a Settings screen (gear on the home) exposes the
 detection knobs as sliders — duplicate sensitivity, "possibly blurry" share,
 big-file floor, content-detection confidence and selfie sensitivity — so they can

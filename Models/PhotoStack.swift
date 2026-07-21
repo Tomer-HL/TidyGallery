@@ -58,4 +58,27 @@ struct PhotoStack: Identifiable, Sendable, Hashable {
 
     /// Estimated reclaimable count if the user accepts the suggestion as-is.
     var reclaimableCount: Int { assetsPreselectedForDeletion.count }
+
+    /// A copy of this stack with `removed` assets dropped, or `nil` when fewer
+    /// than two photos survive (a lone photo is no longer a cleanup group).
+    ///
+    /// If the best shot itself was removed, the highest-ranked survivor
+    /// inherits the title, so a stack never ends up pointing at a photo that no
+    /// longer exists.
+    func removing(_ removed: Set<PhotoAsset.ID>) -> PhotoStack? {
+        guard !removed.isEmpty else { return self }
+        let remaining = assets.filter { !removed.contains($0.id) }
+        guard remaining.count > 1 else { return nil }
+
+        let ranked = rankedAssetIDs.filter { !removed.contains($0) }
+        let best = removed.contains(bestShotID) ? (ranked.first ?? remaining[0].id) : bestShotID
+
+        return PhotoStack(
+            id: id,
+            assets: remaining,
+            bestShotID: best,
+            rankedAssetIDs: ranked,
+            assetsPreselectedForDeletion: assetsPreselectedForDeletion.subtracting(removed)
+        )
+    }
 }
