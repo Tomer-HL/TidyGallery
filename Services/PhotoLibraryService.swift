@@ -434,6 +434,28 @@ final class PhotoLibraryService {
 
     // MARK: - Deletion (Phase 2 entry point — kept here for cohesion)
 
+    // MARK: - Albums
+
+    /// Creates a new Photos album containing the given assets.
+    ///
+    /// This only *references* existing assets in a new collection — nothing is
+    /// copied, nothing is removed, and the originals stay exactly where they are.
+    ///
+    /// `nonisolated` for the same reason as `deleteAssets`: `PHPhotoLibrary`
+    /// runs the change block and fires its completion on its own private queue,
+    /// and awaiting that from the main actor makes the Swift 6 runtime's
+    /// isolation check trap. Assets are fetched inside the block so no
+    /// non-`Sendable` fetch result crosses the boundary.
+    nonisolated func createAlbum(named title: String, withAssetIDs ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        try await PHPhotoLibrary.shared().performChanges {
+            let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+            guard let request = PHAssetCollectionChangeRequest
+                .creationRequestForAssetCollection(withTitle: title) else { return }
+            request.addAssets(assets)
+        }
+    }
+
     /// Deletes assets by identifier. **This is the only method that removes
     /// photos, and it is only ever invoked after explicit user confirmation in
     /// the UI.** The system also shows its own confirmation sheet.

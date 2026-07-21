@@ -230,6 +230,17 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 8 (organise): every cleanup grid gains a toolbar menu with **sort**
+(newest / oldest / largest / smallest — size orders fall back to date until the
+measurement lands, so the grid never looks shuffled) and an **age filter** (past
+year / 1–3 years / older than 3 years). There is deliberately no free-text
+search: photos carry no text to match, so the useful equivalent when cleaning up
+is filtering by age. Selections can also be **exported to a Photos album**
+(`PhotoLibraryService.createAlbum`) — this only references the existing assets in
+a new collection, copying and removing nothing. Like `deleteAssets`, it's
+`nonisolated`, since awaiting `PHPhotoLibrary.performChanges` from the main actor
+is what caused the original delete crash.
+
 Phase 7 (ignore list): photos the user decides to keep can be marked "don't
 suggest again" from any cleanup screen ("Keep N"), and they're then filtered out
 of *every* suggestion — all categories, exact-duplicate extras, stack

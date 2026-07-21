@@ -29,6 +29,9 @@ struct AssetCleanupScreen: View {
     @State private var showConfirm = false
     @State private var isDeleting = false
     @State private var banner: String?
+    @State private var sortOrder: CleanupSortOrder
+    @State private var ageFilter: CleanupAgeFilter = .all
+    @State private var isExporting = false
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: Theme.Spacing.s)]
 
@@ -43,6 +46,9 @@ struct AssetCleanupScreen: View {
         self.onDeleted = onDeleted
         self.onIgnore = onIgnore
         _assets = State(initialValue: assets)
+        // Start from the ordering that suits the category (size-ranked ones open
+        // largest-first), but the user can override it from the toolbar.
+        _sortOrder = State(initialValue: category.sortsBySizeDescending ? .largest : .newest)
         // Recommended cleanup pre-checks its items; other categories start empty.
         _selected = State(initialValue: initiallySelected.intersection(assets.map(\.id)))
     }
@@ -59,13 +65,32 @@ struct AssetCleanupScreen: View {
         if let floor = category.minDisplayBytes, !sizes.isEmpty {
             list = list.filter { (sizes[$0.id] ?? 0) >= floor }
         }
-        if category.sortsBySizeDescending, !sizes.isEmpty {
-            list.sort { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
+        if ageFilter != .all {
+            list = list.filter { ageFilter.matches($0.creationDate) }
         }
+        list = sorted(list)
         if let limit = category.displayLimit {
             list = Array(list.prefix(limit))
         }
         return list
+    }
+
+    /// Applies the chosen order. Size-based orders fall back to date until the
+    /// measurement lands, so the grid never looks arbitrarily shuffled.
+    private func sorted(_ list: [PhotoAsset]) -> [PhotoAsset] {
+        if sortOrder.needsSizes && sizes.isEmpty {
+            return list.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        }
+        switch sortOrder {
+        case .newest:
+            return list.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        case .oldest:
+            return list.sorted { ($0.creationDate ?? .distantFuture) < ($1.creationDate ?? .distantFuture) }
+        case .largest:
+            return list.sorted { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
+        case .smallest:
+            return list.sorted { (sizes[$0.id] ?? 0) < (sizes[$1.id] ?? 0) }
+        }
     }
 
     var body: some View {
@@ -128,6 +153,32 @@ struct AssetCleanupScreen: View {
                 } else {
                     selected = Set(displayed.map(\.id))
                 }
+            }
+            .tint(Theme.Colors.accent)
+        }
+        ToolbarItem(placement: .topBarLeading) {
+            Menu {
+                Picker("Sort", selection: $sortOrder) {
+                    ForEach(CleanupSortOrder.allCases) { order in
+                        Label(order.label, systemImage: order.systemImage).tag(order)
+                    }
+                }
+                Picker("Age", selection: $ageFilter) {
+                    ForEach(CleanupAgeFilter.allCases) { filter in
+                        Text(filter.label).tag(filter)
+                    }
+                }
+                if !selected.isEmpty {
+                    Divider()
+                    Button {
+                        Task { await exportSelectionToAlbum() }
+                    } label: {
+                        Label("Add \(selected.count) to album", systemImage: "rectangle.stack.badge.plus")
+                    }
+                    .disabled(isExporting)
+                }
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease.circle")
             }
             .tint(Theme.Colors.accent)
         }
@@ -252,7 +303,9 @@ struct AssetCleanupScreen: View {
         }
 
         // Non-video, size-ranked categories (big files) show the size.
-        return category.sortsBySizeDescending ? sizeText : nil
+        // Show sizes when the category is size-ranked, or when the user has
+        // explicitly sorted by size and would want to see what they're judging.
+        return (category.sortsBySizeDescending || sortOrder.needsSizes) ? sizeText : nil
     }
 
     private static func formatDuration(_ seconds: TimeInterval) -> String? {
@@ -273,6 +326,24 @@ struct AssetCleanupScreen: View {
 
     private func toggle(_ id: PhotoAsset.ID) {
         if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    /// Saves the current selection into a new Photos album named after the
+    /// category. Nothing is moved or removed — the album just references them.
+    private func exportSelectionToAlbum() async {
+        guard let library, !selected.isEmpty else { return }
+        let ids = Array(selected)
+        let title = "TidyGallery – \(category.title)"
+
+        isExporting = true
+        defer { isExporting = false }
+
+        do {
+            try await library.createAlbum(named: title, withAssetIDs: ids)
+            await flashBanner("Added \(ids.count) to “\(title)”")
+        } catch {
+            await flashBanner("Couldn't create album: \(error.localizedDescription)")
+        }
     }
 
     private func loadSizes() async {
