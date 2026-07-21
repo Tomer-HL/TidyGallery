@@ -131,6 +131,19 @@ final class LibraryScanCoordinator {
     /// content categories. The home is usable throughout.
     private(set) var analysisProgress: ScanProgress?
 
+    /// One analysed photo's outcome, including whether it was skipped because it
+    /// lives only in iCloud.
+    private struct PageResult: Sendable {
+        let index: Int
+        let analysis: AnalyzedImage?
+        let wasInCloud: Bool
+    }
+
+    /// How many photos this scan couldn't analyse because they're stored in
+    /// iCloud and downloading wasn't permitted. Surfaced to the user rather than
+    /// silently dropping them.
+    private(set) var iCloudSkippedCount = 0
+
     /// How much of the library the current scan covers.
     private(set) var scope: ScanScope = ScanScopeStore.load()
 
@@ -230,6 +243,7 @@ final class LibraryScanCoordinator {
     private func runAnalysis() async {
         scanProgress = 0
         scanTotal = 0
+        iCloudSkippedCount = 0
         analysisProgress = ScanProgress(done: 0, total: 0)
         defer { analysisProgress = nil }
 
@@ -309,7 +323,10 @@ final class LibraryScanCoordinator {
                     asset.featurePrint = hit.featurePrint
                     asset.score = hit.score
                     asset.sceneTags = hit.sceneTags
-                } else if let cgImage = await library.analysisImage(for: asset.id),
+                } else if case let .image(cgImage) = await library.analysisImage(
+                              for: asset.id,
+                              allowNetwork: tuning.analyseICloudPhotos
+                          ),
                           let result = try? await analyzer.analyze(image: cgImage, isFavorite: asset.isFavorite) {
                     asset.featurePrint = result.featurePrint
                     asset.score = result.score
@@ -589,6 +606,10 @@ final class LibraryScanCoordinator {
     func applyTuning(_ newTuning: TuningSettings) async {
         guard newTuning != tuning else { return }
         let needsReanalysis = newTuning.requiresReanalysis(comparedTo: tuning)
+        // Only scene/selfie changes invalidate stored results. Enabling iCloud
+        // analysis just needs a rescan: previously-skipped photos have no cache
+        // entry, and everything already analysed locally is still correct.
+        let needsPurge = newTuning.requiresCachePurge(comparedTo: tuning)
 
         isRetuning = true
         defer { isRetuning = false }
@@ -599,7 +620,7 @@ final class LibraryScanCoordinator {
         await analyzer.updateConfiguration(config)
 
         if needsReanalysis {
-            try? await cache.purgeAll()
+            if needsPurge { try? await cache.purgeAll() }
             analysedAssets = []
             await scan()
         } else {
@@ -666,18 +687,28 @@ final class LibraryScanCoordinator {
         guard !toAnalyse.isEmpty else { return (enriched, 0) }
 
         // 2. Analyse misses with bounded concurrency.
-        return try await withThrowingTaskGroup(of: (Int, AnalyzedImage?).self) { group in
+        return try await withThrowingTaskGroup(of: PageResult.self) { group in
             var inFlight = 0
             var iterator = toAnalyse.makeIterator()
 
             func addTask(_ index: Int) {
                 let asset = enriched[index]
+                let allowNetwork = tuning.analyseICloudPhotos
                 group.addTask { [library, analyzer] in
-                    guard let cgImage = await library.analysisImage(for: asset.id) else {
-                        return (index, nil)
+                    switch await library.analysisImage(for: asset.id, allowNetwork: allowNetwork) {
+                    case let .image(cgImage):
+                        let result = try await analyzer.analyze(
+                            image: cgImage,
+                            isFavorite: asset.isFavorite
+                        )
+                        return PageResult(index: index, analysis: result, wasInCloud: false)
+                    case .inCloud:
+                        // Left un-analysed on purpose; reported to the user
+                        // rather than silently dropped.
+                        return PageResult(index: index, analysis: nil, wasInCloud: true)
+                    case .unavailable:
+                        return PageResult(index: index, analysis: nil, wasInCloud: false)
                     }
-                    let result = try await analyzer.analyze(image: cgImage, isFavorite: asset.isFavorite)
-                    return (index, result)
                 }
             }
 
@@ -690,11 +721,17 @@ final class LibraryScanCoordinator {
             var pending: [AnalysisCacheStore.Entry] = []
             pending.reserveCapacity(toAnalyse.count)
 
-            while let (index, result) = try await group.next() {
+            while let pageResult = try await group.next() {
                 inFlight -= 1
                 scanProgress += 1
                 reportProgress()
-                if let result {
+
+                if pageResult.wasInCloud {
+                    iCloudSkippedCount += 1
+                }
+
+                if let result = pageResult.analysis {
+                    let index = pageResult.index
                     enriched[index].featurePrint = result.featurePrint
                     enriched[index].score = result.score
                     enriched[index].sceneTags = result.sceneTags

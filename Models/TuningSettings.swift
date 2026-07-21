@@ -36,12 +36,20 @@ struct TuningSettings: Codable, Equatable, Sendable {
     /// more photos counted as selfies.
     var selfieFaceArea: Double
 
+    /// Whether analysis may download photos stored only in iCloud.
+    ///
+    /// Off by default: it uses network and potentially cellular data. When off,
+    /// iCloud-only photos are skipped rather than analysed from a degraded
+    /// thumbnail, which would misreport sharpness and break duplicate matching.
+    var analyseICloudPhotos: Bool
+
     static let `default` = TuningSettings(
         duplicateSimilarity: AnalysisConfiguration.default.featurePrintSimilarityThreshold,
         blurryPercentile: AnalysisConfiguration.default.blurryPercentile,
         bigFileMinMB: Double(AnalysisConfiguration.default.bigFileMinBytes) / 1_000_000,
         sceneConfidence: AnalysisConfiguration.default.sceneClassificationMinConfidence,
-        selfieFaceArea: AnalysisConfiguration.default.selfieMinFaceAreaFraction
+        selfieFaceArea: AnalysisConfiguration.default.selfieMinFaceAreaFraction,
+        analyseICloudPhotos: false
     )
 
     /// Overlay these choices onto the full configuration.
@@ -61,16 +69,26 @@ struct TuningSettings: Codable, Equatable, Sendable {
     /// immediately with no re-analysis. These two are baked in during analysis
     /// (classification and face geometry run once per photo and are cached), so
     /// changing them means the cache must be discarded and photos re-analysed.
+    /// Changing these makes cached results *wrong*, so the cache must be
+    /// discarded — they were baked into every stored analysis.
+    func requiresCachePurge(comparedTo other: TuningSettings) -> Bool {
+        sceneConfidence != other.sceneConfidence
+            || selfieFaceArea != other.selfieFaceArea
+    }
+
     func requiresReanalysis(comparedTo other: TuningSettings) -> Bool {
         sceneConfidence != other.sceneConfidence
             || selfieFaceArea != other.selfieFaceArea
+            // Turning iCloud analysis on must re-scan so previously-skipped
+            // photos are picked up.
+            || analyseICloudPhotos != other.analyseICloudPhotos
     }
 
     // MARK: - Tolerant decoding
 
     private enum CodingKeys: String, CodingKey {
         case duplicateSimilarity, blurryPercentile, bigFileMinMB
-        case sceneConfidence, selfieFaceArea
+        case sceneConfidence, selfieFaceArea, analyseICloudPhotos
     }
 
     init(
@@ -78,13 +96,15 @@ struct TuningSettings: Codable, Equatable, Sendable {
         blurryPercentile: Double,
         bigFileMinMB: Double,
         sceneConfidence: Float,
-        selfieFaceArea: Double
+        selfieFaceArea: Double,
+        analyseICloudPhotos: Bool
     ) {
         self.duplicateSimilarity = duplicateSimilarity
         self.blurryPercentile = blurryPercentile
         self.bigFileMinMB = bigFileMinMB
         self.sceneConfidence = sceneConfidence
         self.selfieFaceArea = selfieFaceArea
+        self.analyseICloudPhotos = analyseICloudPhotos
     }
 
     /// Any missing key falls back to the default, so adding a knob later never
@@ -102,6 +122,8 @@ struct TuningSettings: Codable, Equatable, Sendable {
             ?? fallback.sceneConfidence
         selfieFaceArea = try container.decodeIfPresent(Double.self, forKey: .selfieFaceArea)
             ?? fallback.selfieFaceArea
+        analyseICloudPhotos = try container.decodeIfPresent(Bool.self, forKey: .analyseICloudPhotos)
+            ?? fallback.analyseICloudPhotos
     }
 }
 

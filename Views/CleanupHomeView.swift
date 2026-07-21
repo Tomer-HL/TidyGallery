@@ -30,6 +30,7 @@ struct CleanupHomeView: View {
             ScrollView {
                 LazyVStack(spacing: Theme.Spacing.m) {
                     analysisBanner
+                    iCloudBanner
                     summaryCard
 
                     sectionHeader("Reclaim space")
@@ -141,6 +142,42 @@ struct CleanupHomeView: View {
                 Text("Everything below is ready to use now.")
                     .font(.caption)
                     .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .padding(Theme.Spacing.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.Colors.surfaceMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+    }
+
+    // MARK: iCloud banner
+
+    /// Explains photos that couldn't be analysed because they live only in
+    /// iCloud, rather than dropping them silently. Offers the one-tap fix.
+    @ViewBuilder
+    private var iCloudBanner: some View {
+        let skipped = coordinator.iCloudSkippedCount
+        if skipped > 0, coordinator.analysisProgress == nil {
+            VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+                Label {
+                    Text("\(skipped) photo\(skipped == 1 ? "" : "s") stored in iCloud")
+                        .font(.subheadline.weight(.semibold))
+                } icon: {
+                    Image(systemName: "icloud.and.arrow.down")
+                }
+                .foregroundStyle(Theme.Colors.textPrimary)
+
+                Text("They weren't analysed, so they're missing from Duplicates and the content categories. Analysing them means downloading them, which uses data.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button("Download and analyse them") {
+                    var updated = coordinator.tuning
+                    updated.analyseICloudPhotos = true
+                    Task { await coordinator.applyTuning(updated) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.Colors.accent)
             }
             .padding(Theme.Spacing.l)
             .frame(maxWidth: .infinity, alignment: .leading)

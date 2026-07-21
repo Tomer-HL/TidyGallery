@@ -309,33 +309,71 @@ final class PhotoLibraryService {
 
     // MARK: - Pixel loading (for the analyzer)
 
+    /// Outcome of trying to load an image for analysis.
+    enum AnalysisImage: Sendable {
+        case image(CGImage)
+        /// The asset lives only in iCloud and network access wasn't permitted.
+        /// Deliberately distinct from a plain failure so the user can be told,
+        /// and offered the choice to download.
+        case inCloud
+        case unavailable
+    }
+
     /// Loads a downscaled `CGImage` for analysis by identifier. Re-resolves the
     /// live `PHAsset` here (on the main actor) so no `PHAsset` ever crosses an
-    /// actor boundary. Returns `nil` if the asset is gone or can't be decoded.
-    func analysisImage(for localIdentifier: String) async -> CGImage? {
-        guard let asset = Self.fetchAsset(localIdentifier) else { return nil }
+    /// actor boundary.
+    ///
+    /// iCloud handling matters for correctness, not just completeness. With
+    /// "Optimize iPhone Storage" many assets exist locally only as a small
+    /// degraded thumbnail. Analysing *that* would be actively wrong: Laplacian
+    /// sharpness measured on a downscaled thumbnail is artificially low (a sharp
+    /// photo would be reported blurry) and its feature print wouldn't match the
+    /// full-resolution one, breaking duplicate detection. So a degraded image is
+    /// never accepted — we report `.inCloud` and let the caller decide.
+    func analysisImage(
+        for localIdentifier: String,
+        allowNetwork: Bool = false
+    ) async -> AnalysisImage {
+        guard let asset = Self.fetchAsset(localIdentifier) else { return .unavailable }
 
         let options = PHImageRequestOptions()
-        options.isNetworkAccessAllowed = false      // strictly on-device
+        options.isNetworkAccessAllowed = allowNetwork
         options.deliveryMode = .highQualityFormat
         options.resizeMode = .fast
         options.isSynchronous = false
 
         return await withCheckedContinuation { continuation in
             var didResume = false
+            func finish(_ result: AnalysisImage) {
+                guard !didResume else { return }
+                didResume = true
+                continuation.resume(returning: result)
+            }
+
             imageManager.requestImage(
                 for: asset,
                 targetSize: analysisTargetSize,
                 contentMode: .aspectFit,
                 options: options
             ) { image, info in
-                // requestImage may call back more than once (degraded then full);
-                // guard so we resume the continuation exactly once.
-                if didResume { return }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                if isDegraded { return }
-                didResume = true
-                continuation.resume(returning: image?.cgImage)
+                let isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) ?? false
+
+                if isDegraded {
+                    // Only a placeholder so far. If the real one is in iCloud and
+                    // we may not fetch it, no better callback is coming — resolve
+                    // now rather than waiting forever.
+                    if isInCloud && !allowNetwork { finish(.inCloud) }
+                    return
+                }
+
+                if let cgImage = image?.cgImage {
+                    finish(.image(cgImage))
+                } else if isInCloud {
+                    finish(.inCloud)
+                } else {
+                    finish(.unavailable)
+                }
             }
         }
     }

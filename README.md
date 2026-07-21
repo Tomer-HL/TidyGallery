@@ -230,6 +230,27 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 14 (iCloud-aware analysis): with "Optimize iPhone Storage" many photos
+exist locally only as a small degraded placeholder. This was a correctness bug,
+not just a gap — analysing that placeholder is actively wrong: Laplacian
+sharpness measured on a downscaled thumbnail is artificially low (a sharp photo
+gets reported blurry) and its feature print doesn't match the full-resolution
+one, so duplicate matching breaks.
+
+`analysisImage` now returns a typed `AnalysisImage` — `.image`, `.inCloud`, or
+`.unavailable` — and **never accepts a degraded frame**. When the full-quality
+image is in iCloud and downloading isn't permitted, the photo is left
+un-analysed and counted, instead of being silently dropped or badly scored. (The
+degraded-plus-in-cloud case also resolves the continuation immediately rather
+than waiting for a callback that will never arrive.)
+
+The count surfaces as a home banner explaining that those photos are missing
+from Duplicates and the content categories, with a one-tap "Download and analyse
+them" that flips the new `analyseICloudPhotos` setting and rescans. That setting
+needs a rescan but **not** a cache purge: previously-skipped photos have no cache
+entry, and everything already analysed locally is still valid — so
+`requiresCachePurge` is now distinct from `requiresReanalysis`.
+
 Phase 13 (scan scope + progressive results): the app no longer makes you wait
 for the whole library before showing anything.
 

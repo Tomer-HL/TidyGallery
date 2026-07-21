@@ -136,6 +136,11 @@ struct SettingsScreen: View {
                     valueLabel: "\(Int(draft.selfieFaceArea * 100))% of frame"
                 )
             }
+            Toggle("Analyse iCloud photos", isOn: $draft.analyseICloudPhotos)
+            Text("Photos stored only in iCloud can't be analysed without downloading them. Left off, they're skipped rather than judged from a low-quality preview — which would report sharp photos as blurry. Turning this on uses network data.")
+                .font(.footnote)
+                .foregroundStyle(Theme.Colors.textSecondary)
+
             if needsRescan {
                 Label(
                     "Changing these re-scans your library, which takes a while.",
