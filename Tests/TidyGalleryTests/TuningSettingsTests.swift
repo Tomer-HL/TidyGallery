@@ -49,9 +49,11 @@ struct TuningSettingsTests {
         confidence.sceneConfidence = 0.2
         #expect(confidence.requiresReanalysis(comparedTo: .default))
 
-        var selfie = TuningSettings.default
-        selfie.selfieFaceArea = 0.25
-        #expect(selfie.requiresReanalysis(comparedTo: .default))
+        var iCloud = TuningSettings.default
+        iCloud.analyseICloudPhotos = true
+        #expect(iCloud.requiresReanalysis(comparedTo: .default))
+        // ...but that one keeps existing local results valid.
+        #expect(!iCloud.requiresCachePurge(comparedTo: .default))
     }
 
     @Test("No change means no re-scan")
@@ -64,7 +66,6 @@ struct TuningSettingsTests {
     @Test("Settings round-trip through Codable")
     func roundTrips() throws {
         var settings = TuningSettings.default
-        settings.selfieFaceArea = 0.17
         settings.sceneConfidence = 0.09
 
         let data = try JSONEncoder().encode(settings)
@@ -81,7 +82,7 @@ struct TuningSettingsTests {
 
         #expect(decoded.duplicateSimilarity == 0.3)
         #expect(decoded.blurryPercentile == TuningSettings.default.blurryPercentile)
-        #expect(decoded.selfieFaceArea == TuningSettings.default.selfieFaceArea)
+        #expect(decoded.sceneConfidence == TuningSettings.default.sceneConfidence)
     }
 
     @Test("An empty object decodes to all defaults")

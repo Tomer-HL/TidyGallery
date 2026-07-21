@@ -230,6 +230,29 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 15 (classification accuracy): real-device testing surfaced three
+misclassifications, each with a different cause.
+
+**Selfies was conceptually wrong.** The rule was "a face fills much of the
+frame" — but that describes a close-up *portrait*, so photos a parent takes of
+their child matched perfectly. What actually defines a selfie is the
+front-facing camera, which iOS already tracks: Selfies now comes from the system
+`smartAlbumSelfPortraits` album, like Screenshots does. That's more correct *and*
+free — it needs no Vision pass, so Selfies joins the instant metadata categories.
+
+**The confidence floor had been over-corrected.** When Food/Documents came up
+empty, the floor dropped 0.5 → 0.05 with the top 10 labels. In a ~1300-class
+taxonomy that tail is noise, and one stray "cat" or "poster" was enough to file
+a child under Pets. Now 0.15 with the top 5.
+
+**Some Documents keywords were far too generic** — "print", "card", "label",
+"sign", "poster", "letter", "note". An ordinary photo of a room matches one of
+those trivially. Pruned to words that only appear in actual documents.
+
+Plus a signal that was computed and ignored: **a document contains no human
+face**, so a detected face now vetoes the Documents tag outright — faces are far
+more reliable than a weak "page" label.
+
 Phase 14 (iCloud-aware analysis): with "Optimize iPhone Storage" many photos
 exist locally only as a small degraded placeholder. This was a correctness bug,
 not just a gap — analysing that placeholder is actively wrong: Laplacian

@@ -191,7 +191,7 @@ struct CleanupCategory: Identifiable, Hashable {
         title: "Selfies",
         systemImage: "person.crop.square",
         noun: "selfie",
-        blurb: "Close-up portraits, detected from face size",
+        blurb: "Front-camera shots, from your Selfies album",
         emptyTitle: "No selfies",
         emptySubtitle: "We didn't detect any selfies to review.",
         isVideo: false,

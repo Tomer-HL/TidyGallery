@@ -27,7 +27,9 @@ final class CachedAnalysis {
     ///   v3 → adds nature (classifier) + selfies (face geometry) tags
     ///   v4 → classifier sensitivity fix (top-N labels over a low floor) and a
     ///        much wider keyword map, so scene tags must be recomputed
-    static let currentSchemaVersion = 4
+    ///   v5 → tightened confidence + pruned keywords, face veto on Documents,
+    ///        and selfies moved to the system smart album
+    static let currentSchemaVersion = 5
 
     /// `PHAsset.localIdentifier`. Unique so we can upsert by identity.
     @Attribute(.unique) var localIdentifier: String

@@ -132,25 +132,21 @@ struct AnalysisConfiguration: Sendable, Equatable {
 
     // MARK: Scene classification (Food / Pets / Documents…)
 
-    /// Floor for a Vision classification label to be considered at all.
+    /// Floor for a Vision classification label to be trusted.
     ///
-    /// Deliberately low. `VNClassifyImageRequest` is a multi-label classifier
-    /// over a ~1300-class taxonomy, so confidence is spread thin — even a
-    /// correct "food" label routinely scores well under 0.5. An earlier 0.5 gate
-    /// meant almost nothing was ever tagged. We instead take the top few labels
-    /// (see `sceneClassificationTopLabels`) above this small floor, which is what
-    /// the taxonomy's scoring actually supports.
-    var sceneClassificationMinConfidence: Float = 0.05
+    /// Finding the right value took two corrections. `VNClassifyImageRequest`
+    /// spreads confidence across a ~1300-class taxonomy, so a 0.5 gate tagged
+    /// almost nothing. But dropping to 0.05 went too far the other way: at that
+    /// level the tail is noise, and a single spurious "cat" or "poster" was
+    /// enough to file a photo of a child under Pets or Documents. 0.15 keeps
+    /// genuine labels while cutting the tail.
+    var sceneClassificationMinConfidence: Float = 0.15
 
-    /// How many of the highest-confidence labels to consider per image. Keeping
-    /// this small stops the long tail of low-confidence noise from producing
-    /// false category matches.
-    var sceneClassificationTopLabels: Int = 10
+    /// How many of the highest-confidence labels to consider per image. Small on
+    /// purpose — the further down the ranking a label sits, the more likely a
+    /// keyword match is coincidence rather than content.
+    var sceneClassificationTopLabels: Int = 5
 
-    /// A photo counts as a selfie when its largest detected face covers at least
-    /// this fraction of the frame (normalised area). ~0.10 catches close-up
-    /// portraits while ignoring group/scene shots with small distant faces.
-    var selfieMinFaceAreaFraction: Double = 0.10
 
     static let `default` = AnalysisConfiguration()
 }

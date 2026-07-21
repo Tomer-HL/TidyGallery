@@ -39,12 +39,12 @@ struct SceneCategoryTests {
         #expect(SceneCategory.categories(forIdentifiers: ["beach"]).contains(.nature))
     }
 
-    @Test("Selfies are never produced from classifier labels (face-based only)")
-    func selfiesNotFromClassifier() {
-        // .selfies has no match tokens; it's decided by the analyzer from face
-        // geometry, so no classifier identifier should ever yield it.
-        for id in ["person", "face", "portrait", "selfie", "head"] {
-            #expect(!SceneCategory.categories(forIdentifiers: [id]).contains(.selfies))
+    @Test("Generic words no longer misfile ordinary photos as documents")
+    func genericWordsDoNotMatchDocuments() {
+        // These were once document keywords; a photo of a room matched them and
+        // was filed alongside scanned pages.
+        for id in ["poster", "sign", "card", "label", "print", "letter", "note"] {
+            #expect(!SceneCategory.categories(forIdentifiers: [id]).contains(.documents))
         }
     }
 

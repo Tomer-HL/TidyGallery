@@ -205,6 +205,31 @@ final class PhotoLibraryService {
         return result
     }
 
+    /// Photos iOS itself identifies as selfies, from the system "Selfies" smart
+    /// album.
+    ///
+    /// This replaces an earlier heuristic ("a face fills much of the frame"),
+    /// which was simply wrong: that describes a close-up PORTRAIT, so photos a
+    /// parent takes of their child matched it perfectly. What actually makes a
+    /// selfie is the front-facing camera, which iOS tracks and exposes here — so
+    /// this is both more correct and free (no Vision pass needed).
+    func fetchSelfies() -> [PhotoAsset] {
+        let albums = PHAssetCollection.fetchAssetCollections(
+            with: .smartAlbum,
+            subtype: .smartAlbumSelfPortraits,
+            options: nil
+        )
+        guard let album = albums.firstObject else { return [] }
+
+        let assets = PHAsset.fetchAssets(in: album, options: scopedOptions())
+        var result: [PhotoAsset] = []
+        result.reserveCapacity(assets.count)
+        assets.enumerateObjects { asset, _, _ in
+            result.append(Self.snapshot(asset))
+        }
+        return result
+    }
+
     /// All videos in the library, newest first, as `Sendable` snapshots (each
     /// carrying its `duration`). Ordering by real file size is done by the UI
     /// once sizes have been measured, since size isn't a fetchable sort key.

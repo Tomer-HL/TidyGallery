@@ -4,9 +4,11 @@
 //
 //  High-level content categories for a photo. Most are derived from Apple's
 //  on-device Vision image classifier (`VNClassifyImageRequest`), which returns a
-//  large flat taxonomy of labels ("food", "pizza", "mountain", ...). A few (like
-//  `.selfies`) come from a different on-device signal (face geometry) and are
-//  added by the analyzer directly rather than mapped from a classifier label.
+//  large flat taxonomy of labels ("food", "pizza", "mountain", ...).
+//
+//  Selfies deliberately are NOT here: they're identified from the system
+//  "Selfies" smart album (front-camera capture), because a face filling the
+//  frame describes a close-up portrait, not a selfie.
 //
 //  Everything here is pure and `Sendable` so it can cross the analyzer actor
 //  boundary and be cached as value types.
@@ -21,15 +23,11 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     case pets
     case documents
     case nature
-    case selfies
 
     /// Whole-word tokens (lowercased) in a Vision classification identifier that
     /// map an observation to this category. Matching is token-based (identifiers
     /// are split on non-letters) so "category" does not match "cat".
     ///
-    /// Categories that are NOT derived from the classifier (e.g. `.selfies`,
-    /// which the analyzer decides from face size) return an empty set here and
-    /// are never produced by `categories(forIdentifiers:)`.
     var matchTokens: Set<String> {
         switch self {
         case .food:
@@ -40,19 +38,23 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
                 "soup", "pasta", "coffee", "sandwich", "seafood", "pastry",
                 "noodle", "noodles", "rice", "cocktail", "wine", "hotdog",
                 // Baked goods (a challah reads as bread/loaf/bakery to Vision).
-                "bakery", "baked", "loaf", "bun", "roll", "dough", "toast",
-                "croissant", "pie", "cookie", "cheese", "egg", "meat", "chicken"
+                // "roll" and "bun" are omitted: too generic to be safe.
+                "bakery", "baked", "loaf", "dough", "toast",
+                "croissant", "pie", "cookie", "cheese", "egg", "meat"
             ]
         case .pets:
             return ["dog", "cat", "puppy", "kitten", "kitty", "pet", "pets"]
         case .documents:
+            // Deliberately narrow. An earlier version included "print", "card",
+            // "label", "sign", "poster", "letter" and "note" — generic enough
+            // that an ordinary photo of a room matched one of them and was filed
+            // as a document. A word only belongs here if a photo containing it
+            // is almost certainly a document.
             return [
                 "document", "documents", "text", "paper", "receipt", "menu",
                 "invoice", "whiteboard", "newspaper",
-                // A photographed book/notebook page reads as book/page/print.
-                "book", "books", "page", "handwriting", "handwritten", "note",
-                "notes", "notebook", "letter", "print", "printout", "magazine",
-                "poster", "sign", "label", "card", "screenshot"
+                // A photographed book or notebook page.
+                "book", "books", "page", "handwriting", "handwritten", "notebook"
             ]
         case .nature:
             return [
@@ -62,8 +64,6 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
                 "desert", "canyon", "coast", "cliff", "glacier", "meadow", "field",
                 "hill", "hills"
             ]
-        case .selfies:
-            return []   // decided from face geometry, not classifier labels
         }
     }
 
@@ -75,8 +75,7 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     }
 
     /// Maps a set of confident classification identifiers to the high-level
-    /// categories they imply. Categories with no match tokens (e.g. `.selfies`)
-    /// are never produced here.
+    /// categories they imply.
     static func categories(forIdentifiers identifiers: [String]) -> Set<SceneCategory> {
         var result: Set<SceneCategory> = []
         for identifier in identifiers {

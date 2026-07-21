@@ -7,9 +7,8 @@
 //
 //  The screen makes one distinction explicit, because it changes how long
 //  applying takes: most settings are used while *deriving* categories, so they
-//  re-apply instantly against photos already analysed. Scene confidence and
-//  selfie sensitivity are baked in during analysis, so changing them discards
-//  the cache and re-scans the library.
+//  re-apply instantly against photos already analysed. Scene confidence is baked
+//  in during analysis, so changing it discards the cache and re-scans.
 //
 
 import SwiftUI
@@ -127,15 +126,6 @@ struct SettingsScreen: View {
                     valueLabel: String(format: "%.2f", draft.sceneConfidence)
                 )
             }
-            VStack(alignment: .leading) {
-                Text("Selfie sensitivity").font(.subheadline)
-                slider(
-                    value: $draft.selfieFaceArea,
-                    range: 0.04...0.30,
-                    step: 0.01,
-                    valueLabel: "\(Int(draft.selfieFaceArea * 100))% of frame"
-                )
-            }
             Toggle("Analyse iCloud photos", isOn: $draft.analyseICloudPhotos)
             Text("Photos stored only in iCloud can't be analysed without downloading them. Left off, they're skipped rather than judged from a low-quality preview — which would report sharp photos as blurry. Turning this on uses network data.")
                 .font(.footnote)
@@ -152,7 +142,7 @@ struct SettingsScreen: View {
         } header: {
             Text("Requires a re-scan")
         } footer: {
-            Text("Content detection sets how confident the classifier must be before tagging Food, Pets, Documents and so on — lower catches more. Selfie sensitivity is how much of the frame a face must fill. These are computed while analysing, so changing them re-analyses your photos.")
+            Text("Content detection sets how confident the classifier must be before tagging Food, Pets, Documents and so on — lower catches more. These are computed while analysing, so changing them re-analyses your photos.")
         }
     }
 

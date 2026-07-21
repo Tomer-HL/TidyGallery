@@ -99,10 +99,13 @@ actor ImageAnalyzer {
         var sceneTags = classificationSucceeded
             ? sceneCategories(from: classifyRequest.results ?? [])
             : []
-        // Selfies come from face geometry, not a classifier label: one or more
-        // faces large enough to fill a good part of the frame.
-        if Self.isSelfie(faces: faces, minFaceAreaFraction: config.selfieMinFaceAreaFraction) {
-            sceneTags.insert(.selfies)
+
+        // A document doesn't contain a person's face. A detected face is a far
+        // more reliable signal than a weak "page"/"paper" label, so it vetoes
+        // the Documents tag outright — this is what put photos of a child in
+        // with scanned book pages.
+        if !faces.isEmpty {
+            sceneTags.remove(.documents)
         }
 
         let score = ShotScore(
@@ -134,17 +137,6 @@ actor ImageAnalyzer {
         return SceneCategory.categories(forIdentifiers: Array(confidentIdentifiers))
     }
 
-    /// A photo reads as a selfie when at least one detected face is large enough
-    /// to fill a meaningful fraction of the frame (a close-up portrait), which
-    /// distinguishes selfies from group/scene photos with small distant faces.
-    /// `VNFaceObservation.boundingBox` is normalised to the image, so the area
-    /// fraction needs no image dimensions.
-    private static func isSelfie(faces: [VNFaceObservation], minFaceAreaFraction: Double) -> Bool {
-        let largestFaceArea = faces
-            .map { Double($0.boundingBox.width * $0.boundingBox.height) }
-            .max() ?? 0
-        return largestFaceArea >= minFaceAreaFraction
-    }
 
     // MARK: - Aesthetics (newer Vision API)
 

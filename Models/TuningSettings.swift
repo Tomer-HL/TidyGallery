@@ -32,9 +32,6 @@ struct TuningSettings: Codable, Equatable, Sendable {
     /// land in the content categories (Food, Pets, …).
     var sceneConfidence: Float
 
-    /// Fraction of the frame the largest face must fill for a selfie. Lower =
-    /// more photos counted as selfies.
-    var selfieFaceArea: Double
 
     /// Whether analysis may download photos stored only in iCloud.
     ///
@@ -48,7 +45,6 @@ struct TuningSettings: Codable, Equatable, Sendable {
         blurryPercentile: AnalysisConfiguration.default.blurryPercentile,
         bigFileMinMB: Double(AnalysisConfiguration.default.bigFileMinBytes) / 1_000_000,
         sceneConfidence: AnalysisConfiguration.default.sceneClassificationMinConfidence,
-        selfieFaceArea: AnalysisConfiguration.default.selfieMinFaceAreaFraction,
         analyseICloudPhotos: false
     )
 
@@ -59,7 +55,6 @@ struct TuningSettings: Codable, Equatable, Sendable {
         config.blurryPercentile = blurryPercentile
         config.bigFileMinBytes = Int64(bigFileMinMB * 1_000_000)
         config.sceneClassificationMinConfidence = sceneConfidence
-        config.selfieMinFaceAreaFraction = selfieFaceArea
         return config
     }
 
@@ -73,12 +68,10 @@ struct TuningSettings: Codable, Equatable, Sendable {
     /// discarded — they were baked into every stored analysis.
     func requiresCachePurge(comparedTo other: TuningSettings) -> Bool {
         sceneConfidence != other.sceneConfidence
-            || selfieFaceArea != other.selfieFaceArea
     }
 
     func requiresReanalysis(comparedTo other: TuningSettings) -> Bool {
         sceneConfidence != other.sceneConfidence
-            || selfieFaceArea != other.selfieFaceArea
             // Turning iCloud analysis on must re-scan so previously-skipped
             // photos are picked up.
             || analyseICloudPhotos != other.analyseICloudPhotos
@@ -88,7 +81,7 @@ struct TuningSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case duplicateSimilarity, blurryPercentile, bigFileMinMB
-        case sceneConfidence, selfieFaceArea, analyseICloudPhotos
+        case sceneConfidence, analyseICloudPhotos
     }
 
     init(
@@ -96,14 +89,12 @@ struct TuningSettings: Codable, Equatable, Sendable {
         blurryPercentile: Double,
         bigFileMinMB: Double,
         sceneConfidence: Float,
-        selfieFaceArea: Double,
         analyseICloudPhotos: Bool
     ) {
         self.duplicateSimilarity = duplicateSimilarity
         self.blurryPercentile = blurryPercentile
         self.bigFileMinMB = bigFileMinMB
         self.sceneConfidence = sceneConfidence
-        self.selfieFaceArea = selfieFaceArea
         self.analyseICloudPhotos = analyseICloudPhotos
     }
 
@@ -120,8 +111,6 @@ struct TuningSettings: Codable, Equatable, Sendable {
             ?? fallback.bigFileMinMB
         sceneConfidence = try container.decodeIfPresent(Float.self, forKey: .sceneConfidence)
             ?? fallback.sceneConfidence
-        selfieFaceArea = try container.decodeIfPresent(Double.self, forKey: .selfieFaceArea)
-            ?? fallback.selfieFaceArea
         analyseICloudPhotos = try container.decodeIfPresent(Bool.self, forKey: .analyseICloudPhotos)
             ?? fallback.analyseICloudPhotos
     }

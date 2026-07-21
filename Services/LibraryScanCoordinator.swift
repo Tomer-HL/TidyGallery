@@ -106,6 +106,7 @@ final class LibraryScanCoordinator {
     private var rawVideos: [PhotoAsset] = []
     private var rawRecordings: [PhotoAsset] = []
     private var rawBigFiles: [PhotoAsset] = []
+    private var rawSelfies: [PhotoAsset] = []
     private var rawExactDuplicateExtras: [PhotoAsset] = []
 
     // MARK: Collaborators
@@ -377,6 +378,7 @@ final class LibraryScanCoordinator {
         // lookup each time.
         let (videos, recordings) = library.fetchVideosAndScreenRecordings()
         rawScreenshots = library.fetchScreenshots()
+        rawSelfies = library.fetchSelfies()
         rawVideos = videos
         rawRecordings = recordings
         rawBigFiles = computeBigFiles()
@@ -401,7 +403,7 @@ final class LibraryScanCoordinator {
         petPhotos = photosTagged(.pets)
         documentPhotos = photosTagged(.documents)
         naturePhotos = photosTagged(.nature)
-        selfiePhotos = photosTagged(.selfies)
+        selfiePhotos = suggestable(rawSelfies)
         stripIgnoredFromStackPreselections()
         recommendedAssets = recommendedDeletions()
         ignoredAssets = library.snapshots(for: Array(ignoredIDs))
