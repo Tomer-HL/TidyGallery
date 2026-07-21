@@ -122,5 +122,10 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// delete), so a moderate threshold is a reasonable default.
     var sceneClassificationMinConfidence: Float = 0.5
 
+    /// A photo counts as a selfie when its largest detected face covers at least
+    /// this fraction of the frame (normalised area). ~0.10 catches close-up
+    /// portraits while ignoring group/scene shots with small distant faces.
+    var selfieMinFaceAreaFraction: Double = 0.10
+
     static let `default` = AnalysisConfiguration()
 }

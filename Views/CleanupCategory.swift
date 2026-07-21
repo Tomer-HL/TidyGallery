@@ -25,6 +25,8 @@ struct CleanupCategory: Identifiable, Hashable {
         case food
         case pets
         case documents
+        case nature
+        case selfies
     }
 
     let kind: Kind
@@ -162,6 +164,34 @@ struct CleanupCategory: Identifiable, Hashable {
         blurb: "Receipts, notes, and other document snaps",
         emptyTitle: "No documents",
         emptySubtitle: "We didn't detect any document photos to review.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let nature = CleanupCategory(
+        kind: .nature,
+        title: "Nature & scenery",
+        systemImage: "mountain.2",
+        noun: "photo",
+        blurb: "Landscapes, sunsets, and scenery detected on-device",
+        emptyTitle: "No scenery photos",
+        emptySubtitle: "We didn't detect any nature or scenery photos to review.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let selfies = CleanupCategory(
+        kind: .selfies,
+        title: "Selfies",
+        systemImage: "person.crop.square",
+        noun: "selfie",
+        blurb: "Close-up portraits, detected from face size",
+        emptyTitle: "No selfies",
+        emptySubtitle: "We didn't detect any selfies to review.",
         isVideo: false,
         sortsBySizeDescending: false,
         displayLimit: nil,

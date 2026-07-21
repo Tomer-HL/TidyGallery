@@ -79,7 +79,12 @@ actor ImageAnalyzer {
         let aesthetics = await Self.aestheticsScore(for: image)
 
         // On-device content classification (best-effort; empty on failure).
-        let sceneTags = classifyScene(image: image)
+        var sceneTags = classifyScene(image: image)
+        // Selfies come from face geometry, not a classifier label: one or more
+        // faces large enough to fill a good part of the frame.
+        if Self.isSelfie(faces: faces, minFaceAreaFraction: config.selfieMinFaceAreaFraction) {
+            sceneTags.insert(.selfies)
+        }
 
         let score = ShotScore(
             sharpness: sharpness,
@@ -109,6 +114,18 @@ actor ImageAnalyzer {
             .filter { $0.confidence >= config.sceneClassificationMinConfidence }
             .map(\.identifier)
         return SceneCategory.categories(forIdentifiers: confidentIdentifiers)
+    }
+
+    /// A photo reads as a selfie when at least one detected face is large enough
+    /// to fill a meaningful fraction of the frame (a close-up portrait), which
+    /// distinguishes selfies from group/scene photos with small distant faces.
+    /// `VNFaceObservation.boundingBox` is normalised to the image, so the area
+    /// fraction needs no image dimensions.
+    private static func isSelfie(faces: [VNFaceObservation], minFaceAreaFraction: Double) -> Bool {
+        let largestFaceArea = faces
+            .map { Double($0.boundingBox.width * $0.boundingBox.height) }
+            .max() ?? 0
+        return largestFaceArea >= minFaceAreaFraction
     }
 
     // MARK: - Aesthetics (newer Vision API)

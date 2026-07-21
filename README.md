@@ -198,13 +198,17 @@ and out of the blurry list. New category thresholds live in
 directory globs, so `project.yml` needs no edits.
 
 Phase 4 (smart content categories): on-device scene classification via Vision's
-`VNClassifyImageRequest` (no third-party services) adds **Food**, **Pets**, and
-**Documents** categories. Confident labels are folded into `SceneCategory` cases
-(`Models/SceneCategory.swift`) by whole-word token matching, computed once in
-`ImageAnalyzer` alongside the feature print and cached with the rest of the
-analysis. The cache carries a `schemaVersion` (`CachedAnalysis`): bumping it (now
-v2) makes already-analysed photos re-run once so they back-fill their scene tags
-instead of staying uncategorised. The SwiftData container build is now resilient
+`VNClassifyImageRequest` (no third-party services) adds **Food**, **Pets**,
+**Documents**, and **Nature & scenery** categories. Confident labels are folded
+into `SceneCategory` cases (`Models/SceneCategory.swift`) by whole-word token
+matching, computed once in `ImageAnalyzer` alongside the feature print and cached
+with the rest of the analysis. **Selfies** use a different on-device signal —
+face geometry: a photo is tagged a selfie when its largest detected face
+(`VNFaceObservation.boundingBox`) fills at least a configurable fraction of the
+frame, so close-up portraits are caught while group/scene shots with small
+distant faces are not. The cache carries a `schemaVersion` (`CachedAnalysis`):
+bumping it (now v3) makes already-analysed photos re-run once so they back-fill
+their scene tags instead of staying uncategorised. The SwiftData container build is now resilient
 — a migration failure wipes the disposable cache and retries (finally falling
 back to in-memory) rather than crashing on launch. The classifier runs on still
 images only; these categories are surfacing-only, like the rest.

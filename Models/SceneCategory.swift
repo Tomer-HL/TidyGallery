@@ -2,11 +2,11 @@
 //  SceneCategory.swift
 //  TidyGallery
 //
-//  High-level content categories derived from Apple's on-device Vision image
-//  classifier (`VNClassifyImageRequest`). The classifier returns a large, flat
-//  taxonomy of labels ("food", "pizza", "dog", "document", ...); we fold the
-//  ones we care about into a few product-facing categories the UI can surface as
-//  cleanup groups.
+//  High-level content categories for a photo. Most are derived from Apple's
+//  on-device Vision image classifier (`VNClassifyImageRequest`), which returns a
+//  large flat taxonomy of labels ("food", "pizza", "mountain", ...). A few (like
+//  `.selfies`) come from a different on-device signal (face geometry) and are
+//  added by the analyzer directly rather than mapped from a classifier label.
 //
 //  Everything here is pure and `Sendable` so it can cross the analyzer actor
 //  boundary and be cached as value types.
@@ -15,17 +15,21 @@
 import Foundation
 
 /// A product-facing content category a photo can belong to. A photo may match
-/// several (e.g. a plate of food on a documented menu), so callers work with a
-/// `Set<SceneCategory>`.
+/// several, so callers work with a `Set<SceneCategory>`.
 enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     case food
     case pets
     case documents
+    case nature
+    case selfies
 
     /// Whole-word tokens (lowercased) in a Vision classification identifier that
     /// map an observation to this category. Matching is token-based (identifiers
-    /// are split on `_`, `-`, and spaces) so "ice_cream" matches food via
-    /// "cream"/"dessert"-style tokens without substring false positives.
+    /// are split on non-letters) so "category" does not match "cat".
+    ///
+    /// Categories that are NOT derived from the classifier (e.g. `.selfies`,
+    /// which the analyzer decides from face size) return an empty set here and
+    /// are never produced by `categories(forIdentifiers:)`.
     var matchTokens: Set<String> {
         switch self {
         case .food:
@@ -43,6 +47,16 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
                 "document", "documents", "text", "paper", "receipt", "menu",
                 "invoice", "whiteboard", "newspaper"
             ]
+        case .nature:
+            return [
+                "landscape", "mountain", "mountains", "beach", "sunset", "sunrise",
+                "sky", "cloud", "clouds", "forest", "tree", "trees", "ocean", "sea",
+                "lake", "river", "waterfall", "nature", "scenery", "valley",
+                "desert", "canyon", "coast", "cliff", "glacier", "meadow", "field",
+                "hill", "hills"
+            ]
+        case .selfies:
+            return []   // decided from face geometry, not classifier labels
         }
     }
 
@@ -54,12 +68,14 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     }
 
     /// Maps a set of confident classification identifiers to the high-level
-    /// categories they imply.
+    /// categories they imply. Categories with no match tokens (e.g. `.selfies`)
+    /// are never produced here.
     static func categories(forIdentifiers identifiers: [String]) -> Set<SceneCategory> {
         var result: Set<SceneCategory> = []
         for identifier in identifiers {
             let toks = tokens(of: identifier)
-            for category in SceneCategory.allCases where !category.matchTokens.isDisjoint(with: toks) {
+            for category in SceneCategory.allCases
+            where !category.matchTokens.isEmpty && !category.matchTokens.isDisjoint(with: toks) {
                 result.insert(category)
             }
         }

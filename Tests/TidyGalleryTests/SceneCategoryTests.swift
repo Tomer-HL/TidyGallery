@@ -32,9 +32,25 @@ struct SceneCategoryTests {
         #expect(SceneCategory.categories(forIdentifiers: ["document"]).contains(.documents))
     }
 
-    @Test("Unrelated labels map to nothing")
+    @Test("Nature labels map to .nature")
+    func natureMapping() {
+        #expect(SceneCategory.categories(forIdentifiers: ["mountain"]).contains(.nature))
+        #expect(SceneCategory.categories(forIdentifiers: ["sunset"]).contains(.nature))
+        #expect(SceneCategory.categories(forIdentifiers: ["beach"]).contains(.nature))
+    }
+
+    @Test("Selfies are never produced from classifier labels (face-based only)")
+    func selfiesNotFromClassifier() {
+        // .selfies has no match tokens; it's decided by the analyzer from face
+        // geometry, so no classifier identifier should ever yield it.
+        for id in ["person", "face", "portrait", "selfie", "head"] {
+            #expect(!SceneCategory.categories(forIdentifiers: [id]).contains(.selfies))
+        }
+    }
+
+    @Test("Truly unrelated labels map to nothing")
     func noMatch() {
-        #expect(SceneCategory.categories(forIdentifiers: ["landscape", "mountain", "sky"]).isEmpty)
+        #expect(SceneCategory.categories(forIdentifiers: ["spreadsheet", "abstract", "pattern"]).isEmpty)
     }
 
     @Test("Multiple labels accumulate multiple categories")

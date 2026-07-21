@@ -59,6 +59,8 @@ final class LibraryScanCoordinator {
     private(set) var foodPhotos: [PhotoAsset] = []
     private(set) var petPhotos: [PhotoAsset] = []
     private(set) var documentPhotos: [PhotoAsset] = []
+    private(set) var naturePhotos: [PhotoAsset] = []
+    private(set) var selfiePhotos: [PhotoAsset] = []
 
     // MARK: Collaborators
 
@@ -222,6 +224,8 @@ final class LibraryScanCoordinator {
         foodPhotos = photosTagged(.food)
         petPhotos = photosTagged(.pets)
         documentPhotos = photosTagged(.documents)
+        naturePhotos = photosTagged(.nature)
+        selfiePhotos = photosTagged(.selfies)
     }
 
     /// Analysed stills carrying a given content tag, newest first. Surfacing-only
@@ -312,6 +316,8 @@ final class LibraryScanCoordinator {
         foodPhotos.removeAll { removed.contains($0.id) }
         petPhotos.removeAll { removed.contains($0.id) }
         documentPhotos.removeAll { removed.contains($0.id) }
+        naturePhotos.removeAll { removed.contains($0.id) }
+        selfiePhotos.removeAll { removed.contains($0.id) }
         pruneStacks(removing: removed)
         phase = .finished(stackCount: stacks.count)
     }

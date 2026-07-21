@@ -24,7 +24,8 @@ final class CachedAnalysis {
     /// asset is re-analysed once, back-filling the new data.
     ///   v1 → feature print + score
     ///   v2 → adds on-device scene tags (food / pets / documents)
-    static let currentSchemaVersion = 2
+    ///   v3 → adds nature (classifier) + selfies (face geometry) tags
+    static let currentSchemaVersion = 3
 
     /// `PHAsset.localIdentifier`. Unique so we can upsert by identity.
     @Attribute(.unique) var localIdentifier: String

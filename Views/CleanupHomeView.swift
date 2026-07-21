@@ -43,6 +43,8 @@ struct CleanupHomeView: View {
                     flatCard(.food, assets: coordinator.foodPhotos)
                     flatCard(.pets, assets: coordinator.petPhotos)
                     flatCard(.documents, assets: coordinator.documentPhotos)
+                    flatCard(.nature, assets: coordinator.naturePhotos)
+                    flatCard(.selfies, assets: coordinator.selfiePhotos)
                 }
                 .padding(Theme.Spacing.l)
             }
