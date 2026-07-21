@@ -196,3 +196,15 @@ confirmation sheet). Favorites remain hard-locked out of duplicate pre-selection
 and out of the blurry list. New category thresholds live in
 `AnalysisConfiguration`; new files are picked up automatically by XcodeGen's
 directory globs, so `project.yml` needs no edits.
+
+Phase 4 (smart content categories): on-device scene classification via Vision's
+`VNClassifyImageRequest` (no third-party services) adds **Food**, **Pets**, and
+**Documents** categories. Confident labels are folded into `SceneCategory` cases
+(`Models/SceneCategory.swift`) by whole-word token matching, computed once in
+`ImageAnalyzer` alongside the feature print and cached with the rest of the
+analysis. The cache carries a `schemaVersion` (`CachedAnalysis`): bumping it (now
+v2) makes already-analysed photos re-run once so they back-fill their scene tags
+instead of staying uncategorised. The SwiftData container build is now resilient
+— a migration failure wipes the disposable cache and retries (finally falling
+back to in-memory) rather than crashing on launch. The classifier runs on still
+images only; these categories are surfacing-only, like the rest.

@@ -21,12 +21,12 @@ actor AnalysisCacheStore {
 
     /// Fetch fresh cached analysis for a batch of assets in one query.
     ///
-    /// - Returns: a dictionary of `localIdentifier -> (FeaturePrint, ShotScore)`
-    ///   containing only entries that are present AND fresh for the supplied
-    ///   modification date. Missing/stale assets are simply absent.
+    /// - Returns: a dictionary of `localIdentifier -> AnalyzedImage` containing
+    ///   only entries that are present AND fresh for the supplied modification
+    ///   date and current pipeline version. Missing/stale assets are absent.
     func freshAnalysis(
         for assets: [(id: String, modificationDate: Date?)]
-    ) throws -> [String: (FeaturePrint, ShotScore)] {
+    ) throws -> [String: AnalyzedImage] {
 
         let ids = assets.map(\.id)
         let descriptor = FetchDescriptor<CachedAnalysis>(
@@ -37,13 +37,17 @@ actor AnalysisCacheStore {
         // Index the caller's modification dates for a freshness check.
         let modDates = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0.modificationDate) })
 
-        var result: [String: (FeaturePrint, ShotScore)] = [:]
+        var result: [String: AnalyzedImage] = [:]
         for row in rows {
             guard row.isFresh(for: modDates[row.localIdentifier] ?? nil),
                   let print = row.decodedFeaturePrint(),
                   let score = row.decodedScore()
             else { continue }
-            result[row.localIdentifier] = (print, score)
+            result[row.localIdentifier] = AnalyzedImage(
+                featurePrint: print,
+                score: score,
+                sceneTags: row.decodedSceneTags()
+            )
         }
         return result
     }
@@ -53,7 +57,8 @@ actor AnalysisCacheStore {
         id: String,
         modificationDate: Date?,
         featurePrint: FeaturePrint,
-        score: ShotScore
+        score: ShotScore,
+        sceneTags: Set<SceneCategory>
     ) throws {
         // Remove a stale row if present, then insert fresh.
         let descriptor = FetchDescriptor<CachedAnalysis>(
@@ -66,7 +71,8 @@ actor AnalysisCacheStore {
             localIdentifier: id,
             modificationDate: modificationDate,
             featurePrint: featurePrint,
-            score: score
+            score: score,
+            sceneTags: sceneTags
         )
         modelContext.insert(row)
         try modelContext.save()

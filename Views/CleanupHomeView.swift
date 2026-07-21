@@ -40,6 +40,9 @@ struct CleanupHomeView: View {
                     flatCard(.bigFiles, assets: coordinator.bigFileCandidates)
                     flatCard(.screenRecordings, assets: coordinator.screenRecordings)
                     flatCard(.blurry, assets: coordinator.blurryPhotos)
+                    flatCard(.food, assets: coordinator.foodPhotos)
+                    flatCard(.pets, assets: coordinator.petPhotos)
+                    flatCard(.documents, assets: coordinator.documentPhotos)
                 }
                 .padding(Theme.Spacing.l)
             }

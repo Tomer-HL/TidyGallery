@@ -114,5 +114,13 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// category meaningful (largest space hogs) instead of listing every photo.
     var bigFileMinBytes: Int64 = 5_000_000   // ~5 MB
 
+    // MARK: Scene classification (Food / Pets / Documents…)
+
+    /// Minimum confidence for a Vision classification label to be trusted when
+    /// mapping a photo to a content category. Higher = fewer false positives,
+    /// fewer photos surfaced. These categories are surfacing-only (review before
+    /// delete), so a moderate threshold is a reasonable default.
+    var sceneClassificationMinConfidence: Float = 0.5
+
     static let `default` = AnalysisConfiguration()
 }

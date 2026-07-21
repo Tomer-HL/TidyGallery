@@ -22,6 +22,9 @@ struct CleanupCategory: Identifiable, Hashable {
         case bigFiles
         case screenRecordings
         case blurry
+        case food
+        case pets
+        case documents
     }
 
     let kind: Kind
@@ -117,6 +120,48 @@ struct CleanupCategory: Identifiable, Hashable {
         blurb: "Standalone shots that look soft — review before deleting",
         emptyTitle: "Nothing looks blurry",
         emptySubtitle: "We didn't flag any standalone photos as soft.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let food = CleanupCategory(
+        kind: .food,
+        title: "Food",
+        systemImage: "fork.knife",
+        noun: "food photo",
+        blurb: "Meals and food shots detected on-device",
+        emptyTitle: "No food photos",
+        emptySubtitle: "We didn't detect any food photos to review.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let pets = CleanupCategory(
+        kind: .pets,
+        title: "Pets",
+        systemImage: "pawprint",
+        noun: "pet photo",
+        blurb: "Photos of cats, dogs, and other pets",
+        emptyTitle: "No pet photos",
+        emptySubtitle: "We didn't detect any pet photos to review.",
+        isVideo: false,
+        sortsBySizeDescending: false,
+        displayLimit: nil,
+        minDisplayBytes: nil
+    )
+
+    static let documents = CleanupCategory(
+        kind: .documents,
+        title: "Documents",
+        systemImage: "doc.text",
+        noun: "document",
+        blurb: "Receipts, notes, and other document snaps",
+        emptyTitle: "No documents",
+        emptySubtitle: "We didn't detect any document photos to review.",
         isVideo: false,
         sortsBySizeDescending: false,
         displayLimit: nil,

@@ -55,6 +55,11 @@ final class LibraryScanCoordinator {
     /// pre-selected). Excludes favorites and anything already in a duplicate stack.
     private(set) var blurryPhotos: [PhotoAsset] = []
 
+    /// Content categories from on-device scene classification.
+    private(set) var foodPhotos: [PhotoAsset] = []
+    private(set) var petPhotos: [PhotoAsset] = []
+    private(set) var documentPhotos: [PhotoAsset] = []
+
     // MARK: Collaborators
 
     private let library: PhotoLibraryService
@@ -172,17 +177,20 @@ final class LibraryScanCoordinator {
             var updated: [PhotoAsset] = []
             for var asset in snapshots {
                 if let hit = cached[asset.id] {
-                    asset.featurePrint = hit.0
-                    asset.score = hit.1
+                    asset.featurePrint = hit.featurePrint
+                    asset.score = hit.score
+                    asset.sceneTags = hit.sceneTags
                 } else if let cgImage = await library.analysisImage(for: asset.id),
                           let result = try? await analyzer.analyze(image: cgImage, isFavorite: asset.isFavorite) {
                     asset.featurePrint = result.featurePrint
                     asset.score = result.score
+                    asset.sceneTags = result.sceneTags
                     try? await cache.store(
                         id: asset.id,
                         modificationDate: asset.modificationDate,
                         featurePrint: result.featurePrint,
-                        score: result.score
+                        score: result.score,
+                        sceneTags: result.sceneTags
                     )
                 }
                 if asset.isAnalysed { updated.append(asset) }
@@ -211,6 +219,18 @@ final class LibraryScanCoordinator {
         screenRecordings = library.fetchScreenRecordings()
         bigFileCandidates = computeBigFiles()
         blurryPhotos = deriveBlurrySingles()
+        foodPhotos = photosTagged(.food)
+        petPhotos = photosTagged(.pets)
+        documentPhotos = photosTagged(.documents)
+    }
+
+    /// Analysed stills carrying a given content tag, newest first. Surfacing-only
+    /// (never pre-selected); videos are excluded since classification runs on
+    /// still images.
+    private func photosTagged(_ category: SceneCategory) -> [PhotoAsset] {
+        analysedAssets
+            .filter { $0.mediaType == .image && $0.sceneTags.contains(category) }
+            .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
     }
 
     /// Actual "big files": measures real on-disk size for the bounded candidate
@@ -289,6 +309,9 @@ final class LibraryScanCoordinator {
         bigFileCandidates.removeAll { removed.contains($0.id) }
         screenRecordings.removeAll { removed.contains($0.id) }
         blurryPhotos.removeAll { removed.contains($0.id) }
+        foodPhotos.removeAll { removed.contains($0.id) }
+        petPhotos.removeAll { removed.contains($0.id) }
+        documentPhotos.removeAll { removed.contains($0.id) }
         pruneStacks(removing: removed)
         phase = .finished(stackCount: stacks.count)
     }
@@ -326,8 +349,9 @@ final class LibraryScanCoordinator {
 
         for i in enriched.indices {
             if let hit = cached[enriched[i].id] {
-                enriched[i].featurePrint = hit.0
-                enriched[i].score = hit.1
+                enriched[i].featurePrint = hit.featurePrint
+                enriched[i].score = hit.score
+                enriched[i].sceneTags = hit.sceneTags
             } else {
                 toAnalyse.append(i)
             }
@@ -362,6 +386,7 @@ final class LibraryScanCoordinator {
                 if let result {
                     enriched[index].featurePrint = result.featurePrint
                     enriched[index].score = result.score
+                    enriched[index].sceneTags = result.sceneTags
                     freshlyAnalysed += 1
                     // 3. Persist (fire-and-forget within the group's lifetime).
                     let asset = enriched[index]
@@ -369,7 +394,8 @@ final class LibraryScanCoordinator {
                         id: asset.id,
                         modificationDate: asset.modificationDate,
                         featurePrint: result.featurePrint,
-                        score: result.score
+                        score: result.score,
+                        sceneTags: result.sceneTags
                     )
                 }
                 // Refill.

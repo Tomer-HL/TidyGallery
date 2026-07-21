@@ -13,6 +13,7 @@
 
 import SwiftUI
 import SwiftData
+import Foundation
 
 @main
 struct TidyGalleryApp: App {
@@ -28,12 +29,7 @@ struct TidyGalleryApp: App {
 
     init() {
         // 1. SwiftData container for the on-device analysis cache.
-        let container: ModelContainer
-        do {
-            container = try ModelContainer(for: CachedAnalysis.self)
-        } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
-        }
+        let container = Self.makeCacheContainer()
         self.modelContainer = container
 
         // 2. Wire services. One PhotoLibraryService is shared everywhere.
@@ -55,5 +51,35 @@ struct TidyGalleryApp: App {
                 .environment(\.photoLibrary, library)
         }
         .modelContainer(modelContainer)
+    }
+
+    // MARK: - Resilient cache container
+
+    /// Builds the SwiftData container for the analysis cache. The cache is
+    /// purely a performance optimisation and fully disposable, so a schema
+    /// migration failure must never brick launch: if the on-disk store can't be
+    /// opened (e.g. an incompatible older schema), we wipe it and retry, and as a
+    /// last resort fall back to an in-memory cache. Either way the app still
+    /// works — it just re-analyses.
+    private static func makeCacheContainer() -> ModelContainer {
+        let schema = Schema([CachedAnalysis.self])
+
+        if let container = try? ModelContainer(for: schema) {
+            return container
+        }
+
+        // Wipe the default on-disk store and retry.
+        let dir = URL.applicationSupportDirectory
+        for name in ["default.store", "default.store-shm", "default.store-wal"] {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        }
+        if let container = try? ModelContainer(for: schema) {
+            return container
+        }
+
+        // Last resort: ephemeral in-memory cache (not persisted between launches).
+        let inMemory = ModelConfiguration(isStoredInMemoryOnly: true)
+        // Safe to force-try: an in-memory store has nothing to migrate or open.
+        return try! ModelContainer(for: schema, configurations: inMemory)
     }
 }

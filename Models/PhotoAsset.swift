@@ -61,6 +61,10 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
     /// Quality breakdown used for best-shot ranking. `nil` until analysed.
     var score: ShotScore?
 
+    /// On-device content categories (food, pets, documents…) from Vision's image
+    /// classifier. Empty until analysed, or when nothing recognisable is found.
+    var sceneTags: Set<SceneCategory> = []
+
     /// Memberwise-style init that still accepts a `CLLocationCoordinate2D` at the
     /// call site (convenient when snapshotting a `PHAsset`) but stores only
     /// primitives internally.
@@ -75,7 +79,8 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
         mediaType: MediaKind = .image,
         duration: TimeInterval = 0,
         featurePrint: FeaturePrint? = nil,
-        score: ShotScore? = nil
+        score: ShotScore? = nil,
+        sceneTags: Set<SceneCategory> = []
     ) {
         self.id = id
         self.creationDate = creationDate
@@ -89,6 +94,7 @@ struct PhotoAsset: Identifiable, Sendable, Hashable {
         self.duration = duration
         self.featurePrint = featurePrint
         self.score = score
+        self.sceneTags = sceneTags
     }
 
     // MARK: Derived
@@ -118,6 +124,7 @@ extension PhotoAsset {
             && lhs.modificationDate == rhs.modificationDate
             && lhs.featurePrint == rhs.featurePrint
             && lhs.score == rhs.score
+            && lhs.sceneTags == rhs.sceneTags
     }
 
     func hash(into hasher: inout Hasher) {

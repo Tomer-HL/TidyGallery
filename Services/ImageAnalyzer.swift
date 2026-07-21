@@ -32,6 +32,8 @@ import CoreGraphics
 struct AnalyzedImage: Sendable {
     let featurePrint: FeaturePrint
     let score: ShotScore
+    /// On-device content categories (food, pets, documents…). May be empty.
+    var sceneTags: Set<SceneCategory> = []
 }
 
 /// On-device image analysis. Reusable across the whole scan.
@@ -39,6 +41,12 @@ actor ImageAnalyzer {
 
     enum AnalyzerError: Error {
         case featurePrintUnavailable
+    }
+
+    private let config: AnalysisConfiguration
+
+    init(config: AnalysisConfiguration = .default) {
+        self.config = config
     }
 
     /// Analyse a single image. `isFavorite` is threaded in from the asset
@@ -70,13 +78,37 @@ actor ImageAnalyzer {
         // On-device aesthetics via the newer async Vision request (best-effort).
         let aesthetics = await Self.aestheticsScore(for: image)
 
+        // On-device content classification (best-effort; empty on failure).
+        let sceneTags = classifyScene(image: image)
+
         let score = ShotScore(
             sharpness: sharpness,
             aesthetics: aesthetics,
             faceQuality: faceQuality,
             isFavorite: isFavorite
         )
-        return AnalyzedImage(featurePrint: print, score: score)
+        return AnalyzedImage(featurePrint: print, score: score, sceneTags: sceneTags)
+    }
+
+    // MARK: - Scene classification (content categories)
+
+    /// Runs Vision's on-device image classifier and folds the confident labels
+    /// into our high-level `SceneCategory` set. Best-effort and isolated in its
+    /// own request handler so a classification failure never affects the required
+    /// feature print. Returns an empty set on any failure.
+    private func classifyScene(image: CGImage) -> Set<SceneCategory> {
+        let request = VNClassifyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return []
+        }
+        let observations = request.results ?? []
+        let confidentIdentifiers = observations
+            .filter { $0.confidence >= config.sceneClassificationMinConfidence }
+            .map(\.identifier)
+        return SceneCategory.categories(forIdentifiers: confidentIdentifiers)
     }
 
     // MARK: - Aesthetics (newer Vision API)

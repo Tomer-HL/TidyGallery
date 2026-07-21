@@ -19,6 +19,13 @@ import SwiftData
 @Model
 final class CachedAnalysis {
 
+    /// Bumped whenever the analysis pipeline gains a new output that older cache
+    /// rows won't have. A row from an earlier version is treated as stale so the
+    /// asset is re-analysed once, back-filling the new data.
+    ///   v1 → feature print + score
+    ///   v2 → adds on-device scene tags (food / pets / documents)
+    static let currentSchemaVersion = 2
+
     /// `PHAsset.localIdentifier`. Unique so we can upsert by identity.
     @Attribute(.unique) var localIdentifier: String
 
@@ -32,6 +39,14 @@ final class CachedAnalysis {
     /// JSON-encoded `ShotScore`.
     var scoreData: Data
 
+    /// JSON-encoded `[SceneCategory]`. Optional so existing rows migrate cleanly;
+    /// `nil` rows are older-version and will be re-analysed.
+    var sceneTagsData: Data?
+
+    /// Which pipeline version produced this row (see `currentSchemaVersion`).
+    /// Defaulted so pre-existing rows migrate to 0 and are refreshed.
+    var schemaVersion: Int = 0
+
     /// When this cache row was written (for optional TTL/debugging).
     var updatedAt: Date
 
@@ -40,12 +55,16 @@ final class CachedAnalysis {
         analysedModificationDate: Date?,
         featurePrintData: Data,
         scoreData: Data,
+        sceneTagsData: Data?,
+        schemaVersion: Int,
         updatedAt: Date = .now
     ) {
         self.localIdentifier = localIdentifier
         self.analysedModificationDate = analysedModificationDate
         self.featurePrintData = featurePrintData
         self.scoreData = scoreData
+        self.sceneTagsData = sceneTagsData
+        self.schemaVersion = schemaVersion
         self.updatedAt = updatedAt
     }
 }
@@ -59,14 +78,17 @@ extension CachedAnalysis {
         localIdentifier: String,
         modificationDate: Date?,
         featurePrint: FeaturePrint,
-        score: ShotScore
+        score: ShotScore,
+        sceneTags: Set<SceneCategory>
     ) throws -> CachedAnalysis {
         let encoder = JSONEncoder()
         return CachedAnalysis(
             localIdentifier: localIdentifier,
             analysedModificationDate: modificationDate,
             featurePrintData: try encoder.encode(featurePrint),
-            scoreData: try encoder.encode(score)
+            scoreData: try encoder.encode(score),
+            sceneTagsData: try encoder.encode(Array(sceneTags)),
+            schemaVersion: currentSchemaVersion
         )
     }
 
@@ -80,9 +102,19 @@ extension CachedAnalysis {
         try? JSONDecoder().decode(ShotScore.self, from: scoreData)
     }
 
+    /// Decode the stored scene tags (empty when absent or corrupt).
+    func decodedSceneTags() -> Set<SceneCategory> {
+        guard let sceneTagsData,
+              let array = try? JSONDecoder().decode([SceneCategory].self, from: sceneTagsData)
+        else { return [] }
+        return Set(array)
+    }
+
     /// Whether this cached row is still valid for an asset with the given
-    /// modification date.
+    /// modification date — the modification date must match AND the row must
+    /// come from the current pipeline version.
     func isFresh(for modificationDate: Date?) -> Bool {
         analysedModificationDate == modificationDate
+            && schemaVersion == Self.currentSchemaVersion
     }
 }
