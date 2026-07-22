@@ -28,9 +28,64 @@ final class ReviewModel {
         /// Display order, best → worst (from the scorer).
         let rankedIDs: [PhotoAsset.ID]
         var bestShotID: PhotoAsset.ID
-        var checkedForDeletion: Set<PhotoAsset.ID>
+        /// Never contains `bestShotID` — the initialiser strips it, and every
+        /// mutator preserves that. See the note on the initialiser.
+        private(set) var checkedForDeletion: Set<PhotoAsset.ID>
+
+        /// Strips the best shot from the deletion set, always.
+        ///
+        /// `PhotoStack.init` already does this, but `PhotoStack` is not the type
+        /// the UI binds to — this is. An audit found the gap: `removeDeleted`
+        /// re-elects `ranked.first` when the old best shot is deleted, and in a
+        /// burst that next-highest-scored photo is very often one of the
+        /// pre-checked extras. Nothing subtracted it, so it could end up starred
+        /// as the best shot AND still in `assetsToDelete` — and because the tile
+        /// hides the delete toggle for the best shot, the user had no way to
+        /// untick it.
+        ///
+        /// Enforcing it here rather than at each call site means a future
+        /// mutator cannot reintroduce the bug by forgetting.
+        init(
+            id: UUID,
+            assets: [PhotoAsset],
+            rankedIDs: [PhotoAsset.ID],
+            bestShotID: PhotoAsset.ID,
+            checkedForDeletion: Set<PhotoAsset.ID>
+        ) {
+            self.id = id
+            self.assets = assets
+            self.rankedIDs = rankedIDs
+            self.bestShotID = bestShotID
+            self.checkedForDeletion = checkedForDeletion.subtracting([bestShotID])
+        }
 
         func asset(_ id: PhotoAsset.ID) -> PhotoAsset? { assets.first { $0.id == id } }
+
+        // MARK: Mutation, each preserving "best is never checked"
+
+        mutating func check(_ id: PhotoAsset.ID) {
+            guard id != bestShotID else { return }
+            checkedForDeletion.insert(id)
+        }
+
+        mutating func uncheck(_ id: PhotoAsset.ID) {
+            checkedForDeletion.remove(id)
+        }
+
+        mutating func setChecked(_ ids: Set<PhotoAsset.ID>) {
+            checkedForDeletion = ids.subtracting([bestShotID])
+        }
+
+        mutating func clearChecks() {
+            checkedForDeletion.removeAll()
+        }
+
+        /// Promotes a new best shot, unchecking it in the same step so the two
+        /// can never disagree.
+        mutating func promote(toBestShot id: PhotoAsset.ID) {
+            bestShotID = id
+            checkedForDeletion.remove(id)
+        }
     }
 
     private(set) var stacks: [Stack]
@@ -59,8 +114,14 @@ final class ReviewModel {
     var hasSelection: Bool { totalPhotosToDelete > 0 }
 
     /// Every asset id the user has confirmed for deletion, across all stacks.
+    ///
+    /// Subtracts the best shot again even though `Stack` already guarantees it.
+    /// This is the last expression before ids reach `deleteAssets`, and the cost
+    /// of the redundancy is one set operation per stack; the cost of being wrong
+    /// is deleting the photo the app told the user it was keeping. `PhotoStack`
+    /// makes the same trade for the same reason.
     var assetsToDelete: [PhotoAsset.ID] {
-        stacks.flatMap { Array($0.checkedForDeletion) }
+        stacks.flatMap { $0.checkedForDeletion.subtracting([$0.bestShotID]) }
     }
 
     // MARK: - Reclaimable space
@@ -96,9 +157,9 @@ final class ReviewModel {
         guard let i = stacks.firstIndex(where: { $0.id == stackID }) else { return }
         guard assetID != stacks[i].bestShotID else { return }   // best shot is protected
         if stacks[i].checkedForDeletion.contains(assetID) {
-            stacks[i].checkedForDeletion.remove(assetID)
+            stacks[i].uncheck(assetID)
         } else {
-            stacks[i].checkedForDeletion.insert(assetID)
+            stacks[i].check(assetID)
         }
     }
 
@@ -106,15 +167,13 @@ final class ReviewModel {
     /// the best shot is never deletable.
     func setBestShot(_ assetID: PhotoAsset.ID, inStack stackID: UUID) {
         guard let i = stacks.firstIndex(where: { $0.id == stackID }) else { return }
-        stacks[i].bestShotID = assetID
-        stacks[i].checkedForDeletion.remove(assetID)
+        stacks[i].promote(toBestShot: assetID)
     }
 
     /// Check every non-best photo in a stack (a "select all extras" convenience).
     func checkAllExtras(inStack stackID: UUID) {
         guard let i = stacks.firstIndex(where: { $0.id == stackID }) else { return }
-        let extras = stacks[i].assets.map(\.id).filter { $0 != stacks[i].bestShotID }
-        stacks[i].checkedForDeletion = Set(extras)
+        stacks[i].setChecked(Set(stacks[i].assets.map(\.id)))
     }
 
     /// Clear all deletion checks in a stack (keep everything **this time**).
@@ -123,7 +182,7 @@ final class ReviewModel {
     /// ever". `ReviewScreen.neverSuggest(_:)` is the durable counterpart.
     func clearChecks(inStack stackID: UUID) {
         guard let i = stacks.firstIndex(where: { $0.id == stackID }) else { return }
-        stacks[i].checkedForDeletion.removeAll()
+        stacks[i].clearChecks()
     }
 
     /// Remove a whole stack from the review list, after the user has said it

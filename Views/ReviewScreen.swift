@@ -236,8 +236,8 @@ struct ReviewScreen: View {
         defer { isDeleting = false }
 
         do {
-            let confirmed = try await library.deleteAssets(withIdentifiers: ids)
-            guard confirmed else { return }   // user cancelled the system sheet
+            let outcome = try await library.deleteAssets(withIdentifiers: ids)
+            guard outcome.confirmed else { return }   // user cancelled the system sheet
 
             // Read the survivors BEFORE `removeDeleted` mutates the stacks.
             //
@@ -264,10 +264,10 @@ struct ReviewScreen: View {
                 // string, and the key it demands stops matching the one the app
                 // looks up.
                 await flashBanner(
-                    String(localized: "Deleted \(ItemNoun.photo.counted(ids.count)) · kept \(ItemNoun.photo.counted(survivors.count))")
+                    String(localized: "Deleted \(ItemNoun.photo.counted(outcome.deletedCount)) · kept \(ItemNoun.photo.counted(survivors.count))")
                 )
             } else {
-                await flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(ids.count))"))
+                await flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(outcome.deletedCount))"))
             }
         } catch {
             await flashBanner("Couldn't delete: \(error.localizedDescription)")

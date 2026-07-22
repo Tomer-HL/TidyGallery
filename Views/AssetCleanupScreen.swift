@@ -4,10 +4,22 @@
 //
 //  One reusable grid screen for every "flat list" cleanup category: screenshots,
 //  large videos, big files, screen recordings, and possibly-blurry singles.
-//  There is no best-shot logic here (that lives in `ReviewScreen`) and NOTHING
-//  is pre-selected — the user multi-selects and confirms, and deletion routes
-//  through the single safe `PhotoLibraryService.deleteAssets` path, which also
-//  triggers the system's own confirmation sheet.
+//  There is no best-shot logic here — that lives in `ReviewScreen`. Deletion
+//  routes through the single safe `PhotoLibraryService.deleteAssets` path, which
+//  also triggers the system's own confirmation sheet.
+//
+//  Pre-selection: this header used to claim "NOTHING is pre-selected". That was
+//  true when it was written and is not true now — `Recommended cleanup` and
+//  `Exact duplicates` both open with `initiallySelected` covering every item
+//  (see `CleanupHomeView`). It is worth being accurate about, because a
+//  maintainer who believes nothing is pre-checked won't think to protect the
+//  pre-checked path, which is precisely the one where a mis-scoped selection
+//  turns into a deletion the user never made.
+//
+//  Two rules hold the safety of this screen together, both worth reading before
+//  touching anything here:
+//    • `actionableSelection` — never act on a photo that isn't on screen.
+//    • `pendingDeletion` — delete exactly the set the confirmation named.
 //
 
 import SwiftUI
@@ -27,6 +39,16 @@ struct AssetCleanupScreen: View {
     @State private var selected: Set<PhotoAsset.ID>
     @State private var sizes: [PhotoAsset.ID: Int64] = [:]
     @State private var showConfirm = false
+    /// The exact ids the confirmation dialog is asking about, frozen when it
+    /// opens.
+    ///
+    /// Without this, the dialog's count and `performDelete` were two separate
+    /// evaluations of `actionableSelection` at two different moments. They agree
+    /// today only because `sizes` is the one input that can still change while
+    /// the dialog is up, and no category currently sets `minDisplayBytes`. That
+    /// is a coincidence of configuration, not a guarantee — and "you delete
+    /// exactly what you confirmed" should not rest on one.
+    @State private var pendingDeletion: [PhotoAsset.ID] = []
     @State private var isDeleting = false
     @State private var banner: String?
     @State private var sortOrder: CleanupSortOrder
@@ -78,6 +100,18 @@ struct AssetCleanupScreen: View {
         return list
     }
 
+    /// What any action will actually touch: the selection restricted to what is
+    /// currently on screen. See `ActionableSelection` for why this exists and
+    /// what went wrong without it — every count and every action in this file
+    /// must come from here, never from `selected` directly.
+    private var actionableSelection: Set<PhotoAsset.ID> {
+        ActionableSelection.resolve(selected: selected, displayed: displayed.map(\.id))
+    }
+
+    /// How many photos any action will affect. Every count shown to the user
+    /// must come from here, never from `selected.count`.
+    private var actionableCount: Int { actionableSelection.count }
+
     /// Applies the chosen order. Size-based orders fall back to date until the
     /// measurement lands, so the grid never looks arbitrarily shuffled.
     private func sorted(_ list: [PhotoAsset]) -> [PhotoAsset] {
@@ -111,14 +145,14 @@ struct AssetCleanupScreen: View {
         .task { await loadSizes() }
         .safeAreaInset(edge: .bottom) { deleteBar }
         .confirmationDialog(
-            String(localized: "Delete \(counted(selected.count))?"),
+            String(localized: "Delete \(counted(pendingDeletion.count))?"),
             isPresented: $showConfirm,
             titleVisibility: .visible
         ) {
-            Button(String(localized: "Delete \(selected.count)"), role: .destructive) {
+            Button(String(localized: "Delete \(pendingDeletion.count)"), role: .destructive) {
                 Task { await performDelete() }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) { pendingDeletion = [] }
         } message: {
             Text("They'll move to Recently Deleted, where you can recover them for 30 days.")
         }
@@ -170,9 +204,12 @@ struct AssetCleanupScreen: View {
         ToolbarItem(placement: .topBarTrailing) {
             Button(allSelected ? String(localized: "Deselect All") : String(localized: "Select All")) {
                 if allSelected {
-                    selected.removeAll()
+                    // Only deselect what's on screen — "Deselect All" on a
+                    // filtered list shouldn't silently discard choices made
+                    // under a different filter.
+                    selected.subtract(displayed.map(\.id))
                 } else {
-                    selected = Set(displayed.map(\.id))
+                    selected.formUnion(displayed.map(\.id))
                 }
             }
             .tint(Theme.Colors.accent)
@@ -189,12 +226,12 @@ struct AssetCleanupScreen: View {
                         Text(filter.label).tag(filter)
                     }
                 }
-                if !selected.isEmpty {
+                if !actionableSelection.isEmpty {
                     Divider()
                     Button {
                         Task { await exportSelectionToAlbum() }
                     } label: {
-                        Label("Add \(selected.count) to album", systemImage: "rectangle.stack.badge.plus")
+                        Label("Add \(actionableCount) to album", systemImage: "rectangle.stack.badge.plus")
                     }
                     .disabled(isExporting)
                 }
@@ -205,14 +242,17 @@ struct AssetCleanupScreen: View {
         }
     }
 
+    /// Whether everything *currently visible* is selected.
     private var allSelected: Bool {
-        !displayed.isEmpty && selected.count == displayed.count
+        ActionableSelection.allVisibleSelected(selected: selected, displayed: displayed.map(\.id))
     }
 
     // MARK: Delete bar
 
     @ViewBuilder private var deleteBar: some View {
-        if !selected.isEmpty {
+        // Keyed to what's actionable, so the bar can't offer to act on a
+        // selection that is entirely filtered out of view.
+        if !actionableSelection.isEmpty {
             VStack(spacing: Theme.Spacing.xs) {
                 keepButton
                 deleteButton
@@ -229,16 +269,16 @@ struct AssetCleanupScreen: View {
     @ViewBuilder private var keepButton: some View {
         if let onIgnore {
             Button {
-                let ids = Array(selected)
+                let ids = Array(actionableSelection)
                 let removed = Set(ids)
                 assets.removeAll { removed.contains($0.id) }
-                selected.removeAll()
+                selected.subtract(removed)
                 onIgnore(ids)
                 Task { await flashBanner(String(localized: "Won't suggest \(counted(ids.count)) again")) }
             } label: {
                 HStack(spacing: Theme.Spacing.s) {
                     Image(systemName: "hand.raised.fill")
-                    Text("Keep \(selected.count) — don't suggest again")
+                    Text("Keep \(actionableCount) — don't suggest again")
                 }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.Colors.accent)
@@ -251,6 +291,9 @@ struct AssetCleanupScreen: View {
 
     @ViewBuilder private var deleteButton: some View {
         Button {
+            // Freeze the set here — what the dialog names is what gets deleted.
+            pendingDeletion = Array(actionableSelection)
+            guard !pendingDeletion.isEmpty else { return }
             showConfirm = true
         } label: {
             HStack(spacing: Theme.Spacing.s) {
@@ -271,14 +314,16 @@ struct AssetCleanupScreen: View {
 
     private var deleteButtonTitle: String {
         if isDeleting { return String(localized: "Deleting…") }
-        var title = String(localized: "Delete \(counted(selected.count))")
+        var title = String(localized: "Delete \(counted(actionableCount))")
         let bytes = selectedBytes
         if bytes > 0 { title += String(localized: " · frees ~\(bytes.formatted(.byteCount(style: .file)))") }
         return title
     }
 
+    /// Bytes the delete button promises to free. Must match the set that will
+    /// actually be deleted, or the button overstates the saving.
     private var selectedBytes: Int64 {
-        selected.reduce(0) { $0 + (sizes[$1] ?? 0) }
+        actionableSelection.reduce(0) { $0 + (sizes[$1] ?? 0) }
     }
 
     // MARK: Empty state
@@ -357,8 +402,9 @@ struct AssetCleanupScreen: View {
     /// Saves the current selection into a new Photos album named after the
     /// category. Nothing is moved or removed — the album just references them.
     private func exportSelectionToAlbum() async {
-        guard let library, !selected.isEmpty else { return }
-        let ids = Array(selected)
+        guard let library else { return }
+        let ids = Array(actionableSelection)
+        guard !ids.isEmpty else { return }
         let title = String(localized: "TidyGallery – \(category.title)")
 
         isExporting = true
@@ -388,20 +434,28 @@ struct AssetCleanupScreen: View {
 
     private func performDelete() async {
         guard let library else { return }
-        let ids = Array(selected)
+        // The frozen set from the confirmation, NOT a fresh evaluation — see
+        // `pendingDeletion`. Never `Array(selected)`: see `ActionableSelection`.
+        let ids = pendingDeletion
+        defer { pendingDeletion = [] }
         guard !ids.isEmpty else { return }
 
         isDeleting = true
         defer { isDeleting = false }
 
         do {
-            let confirmed = try await library.deleteAssets(withIdentifiers: ids)
-            guard confirmed else { return }
+            let outcome = try await library.deleteAssets(withIdentifiers: ids)
+            guard outcome.confirmed else { return }
             let removed = Set(ids)
             assets.removeAll { removed.contains($0.id) }
-            selected.removeAll()
+            // Subtract rather than clear: anything selected but filtered out of
+            // view was not deleted, so silently dropping it would misrepresent
+            // what happened. Restoring the filter brings it back, still checked.
+            selected.subtract(removed)
             onDeleted(ids)   // reconcile home counts + other categories at once
-            await flashBanner(String(localized: "Deleted \(counted(ids.count))"))
+            // Report what actually went, not what was asked for: some ids may
+            // have been deleted elsewhere since this screen opened.
+            await flashBanner(String(localized: "Deleted \(counted(outcome.deletedCount))"))
         } catch {
             await flashBanner(String(localized: "Couldn't delete: \(error.localizedDescription)"))
         }

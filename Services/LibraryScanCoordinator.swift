@@ -932,7 +932,19 @@ final class LibraryScanCoordinator {
     /// Stop ignoring assets — they become eligible for suggestions again.
     func stopIgnoring(ids: [PhotoAsset.ID]) async {
         guard !ids.isEmpty else { return }
-        try? await ignoreList.unignore(ids: ids)
+        do {
+            try await ignoreList.unignore(ids: ids)
+            ignoreListWriteFailed = false
+        } catch {
+            // Symmetry with `ignore(ids:)` above, and for the same reason. This
+            // was `try?`, which subtracted from the in-memory set regardless —
+            // so a failed unignore looked like it worked, the photos came back
+            // into suggestions, and the next launch reloaded from disk and
+            // silently hid them again. Exactly the failure mode the ignore path
+            // documents at length as unacceptable; it just hadn't been applied
+            // to the undo direction.
+            ignoreListWriteFailed = true
+        }
         ignoredIDs.subtract(ids)
         // Restoring can re-open duplicate suggestions, so re-cluster — but the
         // raw library lists are still valid, so no re-enumeration is needed.

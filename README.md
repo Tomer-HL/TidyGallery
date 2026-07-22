@@ -266,6 +266,53 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 21 (auditing the thing that actually deletes photos): the test counts made
+the case on their own. `ScanMetricsTests` had 45 tests; `SafetyInvariantTests`
+had 8. The instrumentation was the best-covered code in the project, and the
+feature that deletes your photos had fewer tests than a one-afternoon size cache.
+
+Worse, all 8 were about *selection* — which photos get proposed. Nothing covered
+the path from the user confirming to `PHAssetChangeRequest.deleteAssets`. Three
+real defects lived in that gap.
+
+**1. Deleting photos the user couldn't see.** `AssetCleanupScreen` held
+`selected` as a flat `Set` of ids beside a separately-derived `displayed` list,
+and nothing reconciled them. Apply the age filter and the hidden photos stay
+selected; the delete bar counts them, the confirmation sheet names them, and
+`deleteAssets` gets them. The size floor is worse: it's only enforced once sizes
+load, so a photo tapped before the measurement lands can vanish a moment later
+with no user action at all. Every count and action now routes through
+`ActionableSelection.resolve` — the selection intersected with what's on screen.
+Intersecting at the point of use rather than pruning on change means hiding a
+photo and bringing it back restores its checkmark, and there's no `onChange` to
+forget when the next filter is added.
+
+**2. A best shot that was also queued for deletion.** `PhotoStack.init` has
+always stripped the best shot from the deletion set, but `ReviewModel.Stack` —
+the type the UI actually binds to — did not. `removeDeleted` re-elects
+`ranked.first` when the best shot goes, and in a burst that next-ranked photo is
+very often one of the pre-checked extras. It would render starred as "best" while
+sitting in `assetsToDelete`, and because the tile hides the delete toggle for the
+best shot, the user had no way to untick it. `checkedForDeletion` is now
+`private(set)` behind mutators that each preserve the invariant, and
+`assetsToDelete` subtracts the best shot again on the way out.
+
+**3. "Deleted 12" after deleting nothing.** Screens hold id snapshots. Stale ids
+are harmless — Photos never reuses a `localIdentifier`, so one resolves to
+nothing rather than to a different photo — but if *all* of them were stale the
+fetch came back empty, iOS showed no confirmation sheet, the change block deleted
+nothing, and the old `Bool` return still said `true`. `deleteAssets` now returns a
+`DeletionOutcome` carrying how many assets really existed, and the banner reports
+that.
+
+Also: the confirmation dialog and `performDelete` were two separate evaluations
+of the same expression at two different moments — they agreed only because no
+category currently sets `minDisplayBytes`. `pendingDeletion` freezes the set when
+the dialog opens, so "you delete exactly what you confirmed" is enforced rather
+than lucky. And `stopIgnoring` still used `try?` where `ignore` had been hardened,
+so a failed undo looked successful until the next launch silently re-hid the
+photos.
+
 Phase 20 (caching the last expensive thing): diagnostics from an iPhone 12 mini,
 199 assets, **100% analysis cache hit** — not one image decoded, not one Vision
 request run:

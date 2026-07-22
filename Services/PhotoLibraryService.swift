@@ -762,20 +762,51 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// *inside* the change block so no non-`Sendable` `PHFetchResult` crosses the
     /// `@Sendable` boundary.
     ///
-    /// - Returns: `true` if the user confirmed and deletion succeeded.
+    /// Outcome of a deletion request.
+    ///
+    /// Richer than the `Bool` this used to return, because `true` was
+    /// ambiguous in a way that mattered. A screen holds a snapshot of asset ids;
+    /// if some were deleted elsewhere in the meantime, `fetchAssets` simply
+    /// doesn't return them. Stale ids are *harmless* — Photos never reuses a
+    /// `localIdentifier`, so one can only resolve to nothing, never to a
+    /// different photo — but if ALL of them are stale the fetch is empty, the
+    /// change block deletes nothing, iOS shows no confirmation sheet at all, and
+    /// the old code still returned `true`. The app then said "Deleted 12" having
+    /// deleted none.
+    struct DeletionOutcome: Sendable {
+        /// Whether the change went through (false = user cancelled the system sheet).
+        let confirmed: Bool
+        /// How many of the requested ids still existed and were actually deleted.
+        let deletedCount: Int
+
+        static let cancelled = DeletionOutcome(confirmed: false, deletedCount: 0)
+    }
+
+    /// - Returns: whether the user confirmed, and how many assets really went.
     @discardableResult
-    func deleteAssets(withIdentifiers ids: [String]) async throws -> Bool {
-        guard !ids.isEmpty else { return false }
+    func deleteAssets(withIdentifiers ids: [String]) async throws -> DeletionOutcome {
+        guard !ids.isEmpty else { return .cancelled }
+
+        // Resolve BEFORE the change block so the count can be reported. This is
+        // a second fetch, which is fine: deletion is a once-per-user-action
+        // path, not a hot loop.
+        let liveCount = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).count
+        guard liveCount > 0 else {
+            // Nothing left to delete. Report it honestly rather than claiming a
+            // successful deletion of assets that were already gone.
+            return DeletionOutcome(confirmed: true, deletedCount: 0)
+        }
+
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
                 PHAssetChangeRequest.deleteAssets(assets)
             }
-            return true
+            return DeletionOutcome(confirmed: true, deletedCount: liveCount)
         } catch {
             // A user cancelling the system confirmation surfaces as an error;
             // treat that as a non-fatal "not confirmed" rather than a failure.
-            if (error as NSError).code == 3072 { return false } // user cancelled
+            if (error as NSError).code == 3072 { return .cancelled } // user cancelled
             throw error
         }
     }
