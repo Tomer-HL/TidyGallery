@@ -40,7 +40,11 @@ struct TidyGalleryApp: App {
         self.ignoreContainer = ignoreContainer
 
         // 2. Wire services. One PhotoLibraryService is shared everywhere.
-        let library = PhotoLibraryService()
+        //    The size cache lives in the same disposable store as the analysis
+        //    cache and is injected into the library service, so every size
+        //    lookup in the app goes through it without any call site knowing.
+        let sizeCache = AssetSizeCacheStore(modelContainer: container)
+        let library = PhotoLibraryService(sizeCache: sizeCache)
         self.library = library
 
         let cache = AnalysisCacheStore(modelContainer: container)
@@ -54,6 +58,7 @@ struct TidyGalleryApp: App {
             analyzer: ImageAnalyzer(config: tuning.applied()),
             cache: cache,
             ignoreList: ignoreList,
+            sizeCache: sizeCache,
             tuning: tuning
         )
         _coordinator = State(initialValue: coordinator)
@@ -79,7 +84,7 @@ struct TidyGalleryApp: App {
         // `IgnoredAsset` is still in this schema so the legacy rows in an
         // existing `default.store` remain readable for the one-time import
         // below. Nothing writes them here any more.
-        let schema = Schema([CachedAnalysis.self, IgnoredAsset.self])
+        let schema = Schema([CachedAnalysis.self, CachedAssetSize.self, IgnoredAsset.self])
 
         if let container = try? ModelContainer(for: schema) {
             return container

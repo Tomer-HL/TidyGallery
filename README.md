@@ -49,6 +49,8 @@ TidyGallery/
 
 Phase 18's instrumentation also adds `Models/ScanMetrics.swift`,
 `Persistence/ScanMetricsStore.swift` and `Views/DiagnosticsScreen.swift`.
+Phase 20 adds `Persistence/CachedAssetSize.swift` and
+`Persistence/AssetSizeCacheStore.swift` — the on-disk size cache.
 
 ## How the grill points were addressed
 
@@ -263,6 +265,64 @@ videos, Big files, Screen recordings), **Clutter** (Screenshots, Possibly
 blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summary
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
+
+Phase 20 (caching the last expensive thing): diagnostics from an iPhone 12 mini,
+199 assets, **100% analysis cache hit** — not one image decoded, not one Vision
+request run:
+
+```
+Wall clock:        1.3 s
+Size measurement   1.7 s   (1x, 8.8 ms per asset)
+Metadata pass      936 ms  (1x, 4.7 ms per asset)
+Vision analysis    —       (every photo served from cache)
+Peak footprint     23.3 MB against 2.03 GB headroom
+```
+
+A scan that did no image work at all still cost 2.7 seconds. Both expensive
+phases are the same call — `PHAssetResource.assetResources(for:)`, the only way
+to read a file's size — and **neither was cached**. `CachedAnalysis` stored
+feature prints and scores because those were obviously expensive; file sizes were
+not, because reading a number felt cheap. At 8.8 ms each, a 20,000-photo library
+was paying roughly **three minutes of resource walking on every launch** to
+recompute numbers that cannot have changed.
+
+The fix is the one already proven for analysis. `CachedAssetSize` +
+`AssetSizeCacheStore` persist sizes keyed on `PHAsset.modificationDate` — the
+same staleness signal `CachedAnalysis` uses, and the right one: the date moves
+when an edit adds an adjusted resource, which is exactly when the on-disk total
+changes. It also moves on a favorite toggle, costing one needless re-measure;
+that is the safe direction to be wrong in. Sizes are *not* purged when tuning
+changes (a file's size doesn't depend on how we score it) but *are* purged when
+the change observer reports deletions, so the cache can't grow unbounded.
+
+`PhotoLibraryService` owns the read/write path, so every size lookup in the app
+benefits without any call site knowing. It works in bounded batches of 500:
+consult the cache, walk `PHAssetResource` for the difference only, write back.
+Batching keeps the misses re-fetch and the SwiftData `IN` query off the whole
+library at once, and commits progressively — a first scan killed midway keeps
+what it already measured.
+
+Three things this got wrong on the first pass, all found in review:
+
+1. **A new cancellation point needs a new contract.** The batch loop returns
+   early when cancelled, which the old measurement could never do. "Big files"
+   filters on `size >= minBytes`, and a missing entry is indistinguishable from
+   a small file — so a truncated map silently shrinks the category. Fixed with
+   `SizeMeasurement.isComplete`; `computeBigFiles` now returns `nil` rather than
+   publishing a confidently wrong shorter list, and the caller keeps the
+   previous one. The cleanup grid had the same latching bug.
+2. **The measurement was reporting itself wrong.** Dividing the whole pass's
+   wall clock by the number of fresh measures bills 20,000 cache lookups to
+   however few assets actually changed — so "cost per measure" would appear to
+   explode precisely when the cache works best. Only the `PHAssetResource` walks
+   are timed now (`sizeWalkSeconds`).
+3. **The counters were never persisted.** Size measurement is fire-and-forget
+   from the analysis pass, and `scan()` saves the report before it finishes, so
+   the saved copy always read zero. `applyLibraryMeasurements` re-saves.
+
+Diagnostics gained an **On-disk sizes** section (from cache / freshly measured /
+cost per measure) so the next device run can confirm the hit rate rather than
+assume it.
 
 Phase 19 (acting on the measurements): the Phase 18 instrumentation was pointed
 at a real 228-photo library on an iPhone 11 Pro Max, and it answered the wrong

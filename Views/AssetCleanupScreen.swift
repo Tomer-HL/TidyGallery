@@ -375,8 +375,15 @@ struct AssetCleanupScreen: View {
     private func loadSizes() async {
         guard let library, sizes.isEmpty, !assets.isEmpty else { return }
         // `await`: measuring on-disk size is a per-asset PHAssetResource
-        // lookup, ~10 ms each. Off the main actor it doesn't stutter the grid.
-        sizes = await library.fileSizes(for: assets.map(\.id))
+        // lookup, ~10 ms each — though after the first scan most of these are
+        // served from the size cache. Off the main actor either way, so a cold
+        // grid doesn't stutter.
+        let measurement = await library.fileSizes(for: assets.map(\.id))
+        // Only latch a complete result: `sizes.isEmpty` is the guard that stops
+        // this re-running, so storing a partial map would leave those photos
+        // permanently without a size label.
+        guard measurement.isComplete else { return }
+        sizes = measurement.sizes
     }
 
     private func performDelete() async {

@@ -281,4 +281,93 @@ struct ScanMetricsTests {
         #expect(ScanMetrics.duration(12).contains("s"))
         #expect(ScanMetrics.duration(125) == "2m 5s")
     }
+
+    // MARK: On-disk size accounting
+
+    @Test("Size cache hit rate is measured against lookups, not photos scanned")
+    func sizeCacheHitRateDenominator() {
+        var metrics = ScanMetrics()
+        // Deliberately different from the analysis counters: a scan can measure
+        // sizes for assets it never analysed (videos, screenshots), so sharing a
+        // denominator would quietly report a rate for the wrong population.
+        metrics.cacheHits = 100
+        metrics.analysedFresh = 0
+        metrics.sizesFromCache = 30
+        metrics.sizesMeasured = 10
+
+        #expect(abs((metrics.sizeCacheHitRate ?? 0) - 0.75) < 0.0001)
+    }
+
+    @Test("Size cache hit rate is nil when nothing was looked up")
+    func sizeCacheHitRateNeedsData() {
+        #expect(ScanMetrics().sizeCacheHitRate == nil)
+    }
+
+    @Test("Cost per measure divides by fresh measures only, never by cache hits")
+    func costPerFreshSize() {
+        var metrics = ScanMetrics()
+        metrics.sizesFromCache = 900
+        metrics.sizesMeasured = 100
+        metrics.sizeWalkSeconds = 0.9
+
+        // 900 ms over the 100 assets actually measured, not over all 1,000 —
+        // otherwise caching would appear to make each measurement cheaper,
+        // which is exactly the wrong conclusion.
+        #expect(abs((metrics.millisecondsPerFreshSize ?? 0) - 9.0) < 0.0001)
+    }
+
+    @Test("Cost per measure ignores the pass total, which includes cache work")
+    func costPerFreshSizeExcludesCacheOverhead() {
+        var metrics = ScanMetrics()
+        metrics.sizesFromCache = 19_997
+        metrics.sizesMeasured = 3
+        metrics.sizeWalkSeconds = 0.027           // 3 walks at ~9 ms
+        // The pass as a whole took far longer — it still had to look up 20,000
+        // cached entries. Billing that to 3 measures would report ~1,300 ms
+        // each and make the cache look like a regression.
+        metrics.record(ScanMetrics.Phase.sizeMeasurement, seconds: 4.0)
+
+        #expect(abs((metrics.millisecondsPerFreshSize ?? 0) - 9.0) < 0.0001)
+    }
+
+    @Test("A fully cached scan reports no per-measure cost rather than zero")
+    func costPerFreshSizeUndefinedWhenAllCached() {
+        var metrics = ScanMetrics()
+        metrics.sizesFromCache = 1_000
+        metrics.sizesMeasured = 0
+        metrics.record(ScanMetrics.Phase.sizeMeasurement, seconds: 0.01)
+
+        #expect(metrics.millisecondsPerFreshSize == nil)
+        #expect(metrics.sizeCacheHitRate == 1.0)
+    }
+
+    @Test("The report shows size accounting only once sizes were looked up")
+    func reportIncludesSizeSection() {
+        var metrics = ScanMetrics()
+        #expect(!metrics.report().contains("ON-DISK SIZES"))
+
+        metrics.sizesFromCache = 190
+        metrics.sizesMeasured = 9
+        let report = metrics.report()
+
+        #expect(report.contains("ON-DISK SIZES"))
+        #expect(report.contains("190"))
+        #expect(report.contains("95%"))   // 190 / 199
+    }
+
+    @Test("Size counters survive a round trip through the metrics store")
+    func sizeCountersEncode() throws {
+        var metrics = ScanMetrics()
+        metrics.sizesFromCache = 12
+        metrics.sizesMeasured = 3
+        metrics.sizeWalkSeconds = 0.027
+
+        let restored = try JSONDecoder().decode(
+            ScanMetrics.self,
+            from: try JSONEncoder().encode(metrics)
+        )
+        #expect(restored.sizesFromCache == 12)
+        #expect(restored.sizesMeasured == 3)
+        #expect(abs(restored.sizeWalkSeconds - 0.027) < 0.0001)
+    }
 }

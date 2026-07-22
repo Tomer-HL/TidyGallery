@@ -56,6 +56,7 @@ struct DiagnosticsScreen: View {
                     contextSection
                     memorySection
                     volumeSection
+                    if metrics.sizesFromCache + metrics.sizesMeasured > 0 { sizesSection }
                     if !metrics.failureReasons.isEmpty { failuresSection }
                     timingSection
                     throughputSection
@@ -154,6 +155,20 @@ struct DiagnosticsScreen: View {
             row("Analysis failures", "\(metrics.analysisFailures)")
         } header: {
             Text("Volume")
+        }
+    }
+
+    private var sizesSection: some View {
+        Section {
+            row("From cache", "\(metrics.sizesFromCache)")
+            row("Freshly measured", "\(metrics.sizesMeasured)")
+            if let perSize = metrics.millisecondsPerFreshSize {
+                row("Cost per measure", String(format: "%.1f ms", perSize))
+            }
+        } header: {
+            Text("On-disk sizes")
+        } footer: {
+            Text("Reading a file's size costs a Photos lookup, so sizes are cached and only re-measured when a photo changes. On a second scan almost all of these should come from cache.")
         }
     }
 

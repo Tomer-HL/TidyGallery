@@ -102,6 +102,16 @@ struct ScanMetrics: Sendable, Equatable, Codable {
     /// problem is distinguishable from one odd photo.
     var failureReasons: [String: Int] = [:]
 
+    /// On-disk sizes served from `CachedAssetSize` without touching Photos.
+    var sizesFromCache = 0
+    /// On-disk sizes walked fresh via `PHAssetResource` — the ~9 ms/asset path.
+    var sizesMeasured = 0
+    /// Seconds spent in those walks alone. Deliberately NOT the `sizeMeasurement`
+    /// phase total, which also covers cache lookups and writes for every asset
+    /// in scope — dividing that by `sizesMeasured` would make the per-measure
+    /// cost appear to blow up exactly when the cache is doing its job.
+    var sizeWalkSeconds: Double = 0
+
     // MARK: Timing
 
     /// Ordered by first occurrence, so the report reads in pipeline order.
@@ -191,6 +201,21 @@ struct ScanMetrics: Sendable, Equatable, Codable {
         return Double(cacheHits) / Double(considered)
     }
 
+    /// Share of size lookups answered without walking `PHAssetResource`.
+    var sizeCacheHitRate: Double? {
+        let considered = sizesFromCache + sizesMeasured
+        guard considered > 0 else { return nil }
+        return Double(sizesFromCache) / Double(considered)
+    }
+
+    /// Cost per *freshly measured* size. This is the number the size cache
+    /// exists to stop paying: it stays roughly constant (~9 ms) while the count
+    /// it multiplies should fall to near zero on every scan after the first.
+    var millisecondsPerFreshSize: Double? {
+        guard sizesMeasured > 0, sizeWalkSeconds > 0 else { return nil }
+        return (sizeWalkSeconds / Double(sizesMeasured)) * 1000
+    }
+
     /// Projected wall clock for a library of `assetCount` photos, assuming none
     /// are cached. Rough by construction — it extrapolates the per-photo cost
     /// measured here — but it answers "will 20k photos take 4 minutes or 40?"
@@ -261,6 +286,16 @@ extension ScanMetrics {
             lines.append("FAILURE REASONS")
             for (reason, count) in failureReasons.sorted(by: { $0.value > $1.value }) {
                 lines.append("  \(count)x  \(reason)")
+            }
+        }
+
+        if sizesFromCache + sizesMeasured > 0 {
+            lines.append("")
+            lines.append("ON-DISK SIZES")
+            lines.append("  From cache:         \(sizesFromCache)\(Self.percentSuffix(sizeCacheHitRate))")
+            lines.append("  Freshly measured:   \(sizesMeasured)")
+            if let perSize = millisecondsPerFreshSize {
+                lines.append("  " + String(format: "Cost per measure:   %.1f ms", perSize))
             }
         }
 

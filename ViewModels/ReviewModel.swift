@@ -85,7 +85,7 @@ final class ReviewModel {
             .flatMap { $0.assets.map(\.id) }
             .filter { assetSizes[$0] == nil }
         guard !unknown.isEmpty else { return }
-        let sizes = await library.fileSizes(for: unknown)
+        let sizes = await library.fileSizes(for: unknown).sizes
         assetSizes.merge(sizes) { _, new in new }
     }
 

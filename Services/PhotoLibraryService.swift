@@ -97,8 +97,14 @@ final class PhotoLibraryService: @unchecked Sendable {
 
     private let imageManager = PHCachingImageManager()
 
-    init(pageSize: Int = 200) {
+    /// Persistent cache for on-disk sizes. Optional so tests and the calibration
+    /// tool can construct a service with no SwiftData stack at all; when it's
+    /// `nil` every size is measured fresh, exactly as before.
+    private let sizeCache: AssetSizeCacheStore?
+
+    init(pageSize: Int = 200, sizeCache: AssetSizeCacheStore? = nil) {
         self.pageSize = pageSize
+        self.sizeCache = sizeCache
     }
 
     /// Fetch options with a scope's date window applied.
@@ -487,19 +493,55 @@ final class PhotoLibraryService: @unchecked Sendable {
 
     // MARK: - On-disk sizes
 
-    /// Total on-disk byte size for each asset id, in one query.
+    /// Result of a size lookup: the sizes themselves, plus how they were
+    /// obtained. The split is reported in Diagnostics — a low hit rate on a
+    /// second scan means the cache is being invalidated for a reason worth
+    /// understanding, and without the counters that is invisible.
+    struct SizeMeasurement: Sendable {
+        var sizes: [String: Int64] = [:]
+        /// Served from `AssetSizeCacheStore` without touching Photos.
+        var fromCache = 0
+        /// Freshly walked via `PHAssetResource` — the expensive path.
+        var measured = 0
+
+        /// Time spent in `PHAssetResource` walks alone — NOT the whole pass.
+        ///
+        /// Reported separately because dividing the pass's wall clock by
+        /// `measured` gives a nonsense number on a warm scan: the pass also
+        /// includes cache lookups and writes for the entire library, so three
+        /// fresh measures out of 20,000 would be billed the full duration and
+        /// "cost per measure" would appear to explode precisely when the cache
+        /// is working best.
+        var measuredSeconds: Double = 0
+
+        /// False when the work was cancelled partway, so `sizes` covers only
+        /// some of the requested assets.
+        ///
+        /// Callers that FILTER on size (rather than merely annotate with it)
+        /// must check this: a missing entry is indistinguishable from a small
+        /// file, so treating a truncated map as complete silently drops assets
+        /// from the category. Before sizes were cached this could not happen —
+        /// the old measurement had no cancellation point.
+        var isComplete = true
+    }
+
+    /// How many assets we resolve per round trip. Bounds both the
+    /// `fetchAssets(withLocalIdentifiers:)` for cache misses and the SwiftData
+    /// `IN` query, neither of which wants a 20,000-element list.
+    private static let sizeBatchSize = 500
+
+    /// Total on-disk byte size for each asset id.
     ///
     /// Sums every `PHAssetResource` for the asset (original + any edited render),
     /// which is what deleting it actually frees. `fileSize` isn't a public
     /// property, so we read it via KVC — the long-standing, widely-used approach;
     /// assets whose size can't be read are simply omitted.
-    ///
-    /// This replaces a former pair of near-identical methods (`fileSizes` and
-    /// `assetFileSizes`) that differed only in isolation. With the service off
-    /// the main actor there is only one correct version.
-    func fileSizes(for identifiers: [String]) async -> [String: Int64] {
-        guard !identifiers.isEmpty else { return [:] }
-        return Self.sizes(of: PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil))
+    func fileSizes(for identifiers: [String]) async -> SizeMeasurement {
+        guard !identifiers.isEmpty else { return SizeMeasurement() }
+        let identities = Self.identities(
+            of: PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+        )
+        return await measure(identities)
     }
 
     /// On-disk size of every asset **within the given scope**, keyed by id.
@@ -514,24 +556,120 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// dominated by the `PHAssetResource` lookup), which extrapolates to minutes
     /// on a large library — the single most expensive thing the app does, and
     /// the one place the app's only cost lever did nothing at all.
-    func libraryFileSizes(scope: ScanScope) async -> [String: Int64] {
+    ///
+    /// Since then it has also become the app's single largest *repeated* cost:
+    /// see `CachedAssetSize` for the device measurement that motivated caching
+    /// it. The scope predicate still matters — the cache makes repeat scans
+    /// cheap, the predicate is what makes the first one cheap.
+    func libraryFileSizes(scope: ScanScope) async -> SizeMeasurement {
         let options = Self.options(scope: scope, sorted: false)
-        return Self.sizes(of: PHAsset.fetchAssets(with: options))
+        let identities = Self.identities(of: PHAsset.fetchAssets(with: options))
+        return await measure(identities)
     }
 
-    private static func sizes(of fetched: PHFetchResult<PHAsset>) -> [String: Int64] {
-        var sizes: [String: Int64] = [:]
+    /// Snapshots a fetch result down to `Sendable` identities.
+    ///
+    /// Reading `localIdentifier` and `modificationDate` is cheap — it is
+    /// `PHAssetResource.assetResources(for:)`, deliberately NOT called here,
+    /// that costs ~9 ms per asset. Doing this first means the cache can be
+    /// consulted before any of that expense is incurred.
+    ///
+    /// Returning value types also keeps the (non-`Sendable`) `PHFetchResult`
+    /// from having to live across an `await` in the caller.
+    private static func identities(of fetched: PHFetchResult<PHAsset>) -> [AssetIdentity] {
+        var identities: [AssetIdentity] = []
+        identities.reserveCapacity(fetched.count)
         fetched.enumerateObjects { asset, _, _ in
-            var total: Int64 = 0
-            var found = false
-            for resource in PHAssetResource.assetResources(for: asset) {
-                if let number = resource.value(forKey: "fileSize") as? NSNumber {
-                    total += number.int64Value
-                    found = true
-                }
-            }
-            if found { sizes[asset.localIdentifier] = total }
+            identities.append(
+                AssetIdentity(id: asset.localIdentifier, modificationDate: asset.modificationDate)
+            )
         }
+        return identities
+    }
+
+    /// Resolves sizes for a set of identities, measuring only what the cache
+    /// can't answer.
+    ///
+    /// Processed in bounded batches so that neither the misses re-fetch nor the
+    /// SwiftData query ever sees the whole library at once, and so a large first
+    /// scan writes its results progressively rather than in one huge commit at
+    /// the end — if the app is killed midway, the work already done survives.
+    ///
+    /// The batch loop is also the app's cancellation point for size work. On a
+    /// cold 20,000-photo library this runs for minutes; callers already cancel
+    /// their task when the user changes scope or triggers a rescan, and without
+    /// this check that abandoned work would keep walking `PHAssetResource` in
+    /// the background while the replacement scan competes with it. Partial
+    /// results are still returned — and everything measured before the
+    /// cancellation is already committed, so the next run starts from there.
+    private func measure(_ identities: [AssetIdentity]) async -> SizeMeasurement {
+        guard !identities.isEmpty else { return SizeMeasurement() }
+
+        var result = SizeMeasurement()
+        result.sizes.reserveCapacity(identities.count)
+
+        for start in stride(from: 0, to: identities.count, by: Self.sizeBatchSize) {
+            if Task.isCancelled {
+                result.isComplete = false
+                return result
+            }
+
+            let batch = Array(identities[start ..< min(start + Self.sizeBatchSize, identities.count)])
+
+            // 1. What do we already know? Absent means missing OR stale.
+            var cached: [String: Int64] = [:]
+            if let sizeCache {
+                cached = (try? await sizeCache.sizes(for: batch)) ?? [:]
+            }
+            for (id, bytes) in cached { result.sizes[id] = bytes }
+            result.fromCache += cached.count
+
+            // 2. Measure only the difference — this is the expensive part.
+            let missing = batch.filter { cached[$0.id] == nil }
+            guard !missing.isEmpty else { continue }
+
+            let measureStart = ContinuousClock.now
+            let fresh = Self.measureOnDisk(ids: missing.map(\.id))
+            result.measuredSeconds += (ContinuousClock.now - measureStart).inSeconds
+
+            for (id, bytes) in fresh { result.sizes[id] = bytes }
+            result.measured += fresh.count
+
+            // 3. Write back, so the next scan skips step 2 entirely.
+            if let sizeCache, !fresh.isEmpty {
+                let entries = missing.compactMap { identity -> AssetSizeCacheStore.Entry? in
+                    guard let bytes = fresh[identity.id] else { return nil }
+                    return AssetSizeCacheStore.Entry(
+                        id: identity.id,
+                        modificationDate: identity.modificationDate,
+                        bytes: bytes
+                    )
+                }
+                try? await sizeCache.storeBatch(entries)
+            }
+        }
+
+        return result
+    }
+
+    /// The expensive path: walks every `PHAssetResource` for each id.
+    /// Assets whose size can't be read are omitted rather than recorded as zero,
+    /// so a failed read is never cached as "this file is empty".
+    private static func measureOnDisk(ids: [String]) -> [String: Int64] {
+        guard !ids.isEmpty else { return [:] }
+        var sizes: [String: Int64] = [:]
+        PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+            .enumerateObjects { asset, _, _ in
+                var total: Int64 = 0
+                var found = false
+                for resource in PHAssetResource.assetResources(for: asset) {
+                    if let number = resource.value(forKey: "fileSize") as? NSNumber {
+                        total += number.int64Value
+                        found = true
+                    }
+                }
+                if found { sizes[asset.localIdentifier] = total }
+            }
         return sizes
     }
 

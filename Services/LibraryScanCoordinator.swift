@@ -135,6 +135,12 @@ final class LibraryScanCoordinator {
     private let cache: AnalysisCacheStore
     private let ignoreList: IgnoreListStore
 
+    /// The on-disk size cache. Held here only to purge rows for deleted assets;
+    /// `PhotoLibraryService` owns the read/write path. Deliberately NOT purged
+    /// when tuning changes — a file's size doesn't depend on how we score it,
+    /// so `AnalysisCacheStore.purgeAll()` has no counterpart here.
+    private let sizeCache: AssetSizeCacheStore?
+
     /// Live analysis configuration. Mutable so the Settings screen can retune
     /// detection without a rebuild.
     private(set) var config: AnalysisConfiguration
@@ -242,12 +248,14 @@ final class LibraryScanCoordinator {
         analyzer: ImageAnalyzer,
         cache: AnalysisCacheStore,
         ignoreList: IgnoreListStore,
+        sizeCache: AssetSizeCacheStore? = nil,
         tuning: TuningSettings = TuningStore.load()
     ) {
         self.library = library
         self.analyzer = analyzer
         self.cache = cache
         self.ignoreList = ignoreList
+        self.sizeCache = sizeCache
         self.tuning = tuning
         self.config = tuning.applied()
     }
@@ -395,6 +403,10 @@ final class LibraryScanCoordinator {
         // Removals.
         if !change.removedIdentifiers.isEmpty {
             try? await cache.purge(ids: change.removedIdentifiers)
+            // Sizes live in their own store, so they need their own purge —
+            // otherwise every photo the user deletes leaves a row behind and the
+            // cache grows without bound over the app's lifetime.
+            try? await sizeCache?.purge(ids: change.removedIdentifiers)
             let removed = Set(change.removedIdentifiers)
             analysedAssets.removeAll { removed.contains($0.id) }
         }
@@ -487,7 +499,10 @@ final class LibraryScanCoordinator {
         rawSelfies = await selfiesFetch
         rawVideos = videos
         rawRecordings = recordings
-        rawBigFiles = await bigFilesFetch
+        // nil means the size pass was cancelled midway (a rescan overtook it),
+        // so keep whatever we last published rather than replacing it with a
+        // list built from incomplete measurements.
+        if let bigFiles = await bigFilesFetch { rawBigFiles = bigFiles }
         refreshDerivedCategories()
     }
 
@@ -576,10 +591,11 @@ final class LibraryScanCoordinator {
         totalSizeTask?.cancel()
         totalSizeTask = Task { [weak self, library] in
             let start = ContinuousClock.now
-            let sizes = await library.libraryFileSizes(scope: scope)
+            let measurement = await library.libraryFileSizes(scope: scope)
             guard !Task.isCancelled else { return }
             let measurementSeconds = (ContinuousClock.now - start).inSeconds
 
+            let sizes = measurement.sizes
             let total = sizes.values.reduce(0, +)
             let groups = finder.groups(from: assets, sizes: sizes)
             let extras = finder.extras(in: groups)
@@ -589,7 +605,10 @@ final class LibraryScanCoordinator {
                 total: total,
                 groups: groups,
                 extras: extras,
-                measurementSeconds: measurementSeconds
+                measurementSeconds: measurementSeconds,
+                sizesFromCache: measurement.fromCache,
+                sizesMeasured: measurement.measured,
+                sizeWalkSeconds: measurement.measuredSeconds
             )
         }
     }
@@ -600,9 +619,19 @@ final class LibraryScanCoordinator {
         total: Int64,
         groups: [[PhotoAsset]],
         extras: [PhotoAsset],
-        measurementSeconds: Double = 0
+        measurementSeconds: Double = 0,
+        sizesFromCache: Int = 0,
+        sizesMeasured: Int = 0,
+        sizeWalkSeconds: Double = 0
     ) {
         metrics.record(ScanMetrics.Phase.sizeMeasurement, seconds: measurementSeconds)
+        metrics.sizesFromCache += sizesFromCache
+        metrics.sizesMeasured += sizesMeasured
+        metrics.sizeWalkSeconds += sizeWalkSeconds
+        // Re-save: this runs *after* `scan()` already persisted the report, so
+        // without this the saved copy — the one Diagnostics shows after a
+        // relaunch — would always report zero sizes measured.
+        ScanMetricsStore.save(metrics)
         totalLibraryBytes = total
         exactDuplicateGroups = groups
         rawExactDuplicateExtras = extras
@@ -642,9 +671,9 @@ final class LibraryScanCoordinator {
 
         summaryTask?.cancel()
         summaryTask = Task { [weak self, library] in
-            let sizes = await library.fileSizes(for: Array(input.unionIDs))
+            let measurement = await library.fileSizes(for: Array(input.unionIDs))
             guard !Task.isCancelled else { return }
-            self?.storageSummary = StorageSummaryBuilder.build(input, sizes: sizes)
+            self?.storageSummary = StorageSummaryBuilder.build(input, sizes: measurement.sizes)
         }
     }
 
@@ -672,10 +701,18 @@ final class LibraryScanCoordinator {
         stillLimit: Int,
         minBytes: Int64,
         displayLimit: Int
-    ) async -> [PhotoAsset] {
+    ) async -> [PhotoAsset]? {
         let candidates = await library.fetchLargeFileCandidates(scope: scope, stillLimit: stillLimit)
         guard !candidates.isEmpty else { return [] }
-        let sizes = await library.fileSizes(for: candidates.map(\.id))
+
+        let measurement = await library.fileSizes(for: candidates.map(\.id))
+        // A truncated size map would silently shrink this category: an asset
+        // with no measured size fails the `>= minBytes` test exactly as a small
+        // file does. Returning nil says "no answer" so the caller keeps the
+        // previous list, rather than publishing a confidently wrong shorter one.
+        guard measurement.isComplete else { return nil }
+
+        let sizes = measurement.sizes
         return candidates
             .filter { (sizes[$0.id] ?? 0) >= minBytes }
             .sorted { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
