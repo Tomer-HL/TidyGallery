@@ -177,6 +177,8 @@
   "Never suggest": "אל תציע שוב",
   "Couldn't save your choice": "לא הצלחנו לשמור את הבחירה שלך",
   "The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart.": "התמונות ששמרת מוסתרות בינתיים, אבל ההחלטה לא נכתבה לאחסון ולא תישרד הפעלה מחדש.",
-  "Deleted %@ · kept %@": "‏%1$@ נמחקו · %2$@ נשמרו",
-  "of %@ scanned": "מתוך %@ שנסרקו"
+  "of %@ scanned": "מתוך %@ שנסרקו",
+  "Will keep suggesting %@": "נמשיך להציע %@",
+  "Deleted %@ · won't suggest %@ again": "‏%1$@ נמחקו · לא נציע %2$@ שוב",
+  "Keep suggesting": "המשך להציע"
 }

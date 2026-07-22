@@ -24,12 +24,54 @@ struct ReviewScreen: View {
     /// scan — the app quietly forgetting every decision they made.
     var onIgnore: (([PhotoAsset.ID]) -> Void)?
 
+    /// Records the implicit "I'm keeping these" for photos left unticked after a
+    /// deletion. Separate from `onIgnore` because only this one is reversible:
+    /// the coordinator remembers which ids it actually added.
+    var onAutoKeep: (([PhotoAsset.ID]) -> Void)?
+
+    /// Reverses the most recent automatic keep. Takes no ids on purpose — the
+    /// coordinator knows which ones it added, and this view does not. `nil`
+    /// hides the reversing button rather than showing one that does nothing.
+    var onStopIgnoring: (() -> Void)?
+
     @State private var showConfirm = false
     @State private var isDeleting = false
-    @State private var banner: String?
+    @State private var banner: Banner?
+    @State private var bannerTask: Task<Void, Never>?
     @State private var preview: PreviewContext?
     /// Which photo's score breakdown is open. Built on demand only.
     @State private var explaining: ExplainContext?
+
+    /// A transient message, optionally carrying the action that reverses it.
+    ///
+    /// The banner used to be a bare `String`, which was fine while it only
+    /// reported things the user had just asked for. It stopped being fine when
+    /// it became the sole disclosure of something the app decided on its own:
+    /// after a deletion, every photo in the affected stacks that the user did
+    /// NOT tick is written to the permanent ignore list, app-wide. The
+    /// reasoning is sound — you have already curated that burst, so don't ask
+    /// again — but not ticking a photo during a duplicate review says nothing
+    /// about whether it is a blurry screenshot, and the decision suppressed it
+    /// in every other category too.
+    ///
+    /// Undo is the smallest honest fix: it leaves the behaviour (which is
+    /// usually right) and restores control at the moment it is taken, rather
+    /// than requiring the user to discover the Ignored screen later and work out
+    /// what happened.
+    private struct Banner: Identifiable {
+        let id = UUID()
+        let text: String
+        /// How many photos the auto-keep applied to, when it did. Drives the
+        /// reversing button.
+        ///
+        /// A count, not a closure. Storing the action itself meant `Banner` held
+        /// a snapshot of `self`, which made a (self-healing but real) retain
+        /// cycle through the `@State` box and — worse — read `bannerTask`
+        /// through that stale copy, so the cancellation could miss the live
+        /// task. The view already knows how to reverse the keep; it only needs
+        /// to be told that there is one.
+        var keptCount: Int?
+    }
 
     /// Identifies the photo being explained and the stack it belongs to, so the
     /// breakdown can compare it against that group's best shot.
@@ -49,11 +91,15 @@ struct ReviewScreen: View {
     init(
         stacks: [PhotoStack],
         onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in },
-        onIgnore: (([PhotoAsset.ID]) -> Void)? = nil
+        onIgnore: (([PhotoAsset.ID]) -> Void)? = nil,
+        onAutoKeep: (([PhotoAsset.ID]) -> Void)? = nil,
+        onStopIgnoring: (() -> Void)? = nil
     ) {
         _model = State(initialValue: ReviewModel(stacks: stacks))
         self.onDeleted = onDeleted
         self.onIgnore = onIgnore
+        self.onAutoKeep = onAutoKeep
+        self.onStopIgnoring = onStopIgnoring
     }
 
     var body: some View {
@@ -82,6 +128,13 @@ struct ReviewScreen: View {
             Text("They'll move to Recently Deleted, where you can recover them for 30 days.")
         }
         .overlay(alignment: .top) { bannerView }
+        // Clearing `banner` matters as much as cancelling: leaving it set keeps
+        // this screen's `ReviewModel` — and every stack in it — alive for the
+        // rest of the dwell after the user has navigated away.
+        .onDisappear {
+            bannerTask?.cancel()
+            banner = nil
+        }
         .fullScreenCover(item: $preview) { ctx in
             PhotoPreviewView(model: model, stackID: ctx.stackID, startAssetID: ctx.startAssetID)
         }
@@ -158,14 +211,44 @@ struct ReviewScreen: View {
 
     @ViewBuilder private var bannerView: some View {
         if let banner {
-            Text(banner)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, Theme.Spacing.l)
-                .padding(.vertical, Theme.Spacing.m)
-                .background(Theme.Colors.accent, in: Capsule())
-                .padding(.top, Theme.Spacing.s)
-                .transition(.move(edge: .top).combined(with: .opacity))
+            HStack(spacing: Theme.Spacing.m) {
+                Text(banner.text)
+                    .font(.subheadline.weight(.semibold))
+                if banner.keptCount != nil {
+                    Button {
+                        undoAutoKeep()
+                    } label: {
+                        // "Keep suggesting", not "Undo".
+                        //
+                        // Beside the text "Deleted 3 · won't suggest 5 again",
+                        // an Undo button reads as "undo the deletion" — which is
+                        // the one thing it does not do. A user chasing photos
+                        // back out of Recently Deleted would tap it, get an
+                        // unrelated confirmation, and learn nothing. Naming the
+                        // action removes the ambiguity entirely.
+                        Text("Keep suggesting")
+                            .font(.subheadline.weight(.bold))
+                            .underline()
+                            // Inside the label, with a content shape: applied to
+                            // the Button it would grow the layout frame while
+                            // leaving the hit region the size of the glyph.
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, Theme.Spacing.l)
+            .padding(.vertical, banner.keptCount == nil ? Theme.Spacing.m : Theme.Spacing.xs)
+            .background(Theme.Colors.accent, in: Capsule())
+            .padding(.top, Theme.Spacing.s)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            // The banner is the ONLY disclosure that photos were auto-kept, and
+            // it leaves after six seconds. Without this VoiceOver never mentions
+            // it at all.
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isSummaryElement)
         }
     }
 
@@ -218,11 +301,10 @@ struct ReviewScreen: View {
         model.clearChecks(inStack: stack.id)
         onIgnore(ids)
         model.removeStack(stack.id)
-        Task {
-            await flashBanner(
-                String(localized: "Won't suggest \(ItemNoun.photo.counted(ids.count)) again")
-            )
-        }
+        // No Undo here: this one the user explicitly asked for, and the Ignored
+        // screen is the right place to reverse a deliberate choice. Undo is for
+        // decisions the app made on its own.
+        flashBanner(String(localized: "Won't suggest \(ItemNoun.photo.counted(ids.count)) again"))
     }
 
     // MARK: Delete action
@@ -252,8 +334,8 @@ struct ReviewScreen: View {
             model.removeDeleted(ids)
             onDeleted(ids)   // reconcile home counts + other categories at once
 
-            if !survivors.isEmpty, let onIgnore {
-                onIgnore(survivors)
+            if !survivors.isEmpty, let onAutoKeep {
+                onAutoKeep(survivors)
                 // Both counts are interpolated inline rather than via local
                 // bindings, and the literal is single-line. Both are constraints
                 // of the localization coverage check in
@@ -263,20 +345,65 @@ struct ReviewScreen: View {
                 // behind a `let` makes it guess `%lld` for what is really a
                 // string, and the key it demands stops matching the one the app
                 // looks up.
-                await flashBanner(
-                    String(localized: "Deleted \(ItemNoun.photo.counted(outcome.deletedCount)) · kept \(ItemNoun.photo.counted(survivors.count))")
+                // Says what happened to the kept photos, rather than just that
+                // they were kept. "kept 5" reads as a neutral fact; it was in
+                // truth the app deciding, on its own, never to mention those
+                // five anywhere again.
+                flashBanner(
+                    String(localized: "Deleted \(ItemNoun.photo.counted(outcome.deletedCount)) · won't suggest \(ItemNoun.photo.counted(survivors.count)) again"),
+                    // The only banner in the app reporting something the user
+                    // did not ask for, so the only one offering to take it back.
+                    keptCount: onStopIgnoring == nil ? nil : survivors.count
                 )
             } else {
-                await flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(outcome.deletedCount))"))
+                flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(outcome.deletedCount))"))
             }
         } catch {
-            await flashBanner("Couldn't delete: \(error.localizedDescription)")
+            // `String(localized:)`, not a bare literal: the key already exists
+            // in both .strings files (AssetCleanupScreen adds it correctly), so
+            // this was rendering in English on a Hebrew device for no reason.
+            flashBanner(String(localized: "Couldn't delete: \(error.localizedDescription)"))
         }
     }
 
-    private func flashBanner(_ text: String) async {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { banner = text }
-        try? await Task.sleep(for: .seconds(2.5))
-        withAnimation(.easeIn(duration: 0.2)) { banner = nil }
+    /// Reverses the automatic keep the banner is reporting.
+    ///
+    /// Delegates the "which ids did that actually add" question to the
+    /// coordinator — see `LibraryScanCoordinator.lastAutoIgnored`. A photo can
+    /// survive a stack while *already* being ignored from an earlier, deliberate
+    /// decision, and reversing that too would be the app overriding the user in
+    /// the name of giving them control.
+    private func undoAutoKeep() {
+        guard let count = banner?.keptCount else { return }
+        onStopIgnoring?()
+        flashBanner(String(localized: "Will keep suggesting \(ItemNoun.photo.counted(count))"))
     }
+
+    /// Shows a banner, optionally with an action that reverses what it reports.
+    ///
+    /// No longer `async`. It used to sleep for its own dwell time, which made
+    /// every caller `await` a message it had nothing more to do with — and,
+    /// worse, meant two banners in quick succession each cleared the other's
+    /// state. The dwell now lives in a cancellable task keyed to the banner's
+    /// id, so a newer message replaces an older one cleanly.
+    private func flashBanner(_ text: String, keptCount: Int? = nil) {
+        bannerTask?.cancel()
+        let next = Banner(text: text, keptCount: keptCount)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { banner = next }
+
+        bannerTask = Task { @MainActor in
+            // Reversible banners stay up more than twice as long. 2.5s is enough
+            // to read a confirmation of something you just did; it is not enough
+            // to notice the app did something you didn't ask for, read what,
+            // decide you disagree, and reach the button.
+            try? await Task.sleep(for: .seconds(keptCount == nil ? 2.5 : 6))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.2)) {
+                // Only clear if it's still the same banner — a newer one that
+                // arrived meanwhile owns the slot now.
+                if banner?.id == next.id { banner = nil }
+            }
+        }
+    }
+
 }

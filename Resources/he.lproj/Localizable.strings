@@ -37,7 +37,7 @@
 "Delete %@?" = "למחוק %@?";
 "Delete %lld" = "מחק %lld";
 "Deleted %@" = "%@ נמחקו";
-"Deleted %@ · kept %@" = "‏%1$@ נמחקו · %2$@ נשמרו";
+"Deleted %@ · won't suggest %@ again" = "‏%1$@ נמחקו · לא נציע %2$@ שוב";
 "Deleting…" = "מוחקים…";
 "Deselect All" = "בטל בחירה";
 "Detected on-device" = "זוהה במכשיר";
@@ -66,6 +66,7 @@
 "Ignored" = "לא להציע שוב";
 "Keep %lld — don't suggest again" = "שמור %lld — אל תציע שוב";
 "Keep all" = "שמור הכול";
+"Keep suggesting" = "המשך להציע";
 "Keeping all — tap photos to remove" = "שומרים הכול — הקש על תמונות כדי להסיר";
 "Keeping the ★ best shot, removing %lld" = "שומרים את התמונה ★ הטובה ביותר, מוחקים %lld";
 "Landscapes, sunsets, and scenery detected on-device" = "נופים, שקיעות ותמונות טבע שזוהו במכשיר";
@@ -162,6 +163,7 @@
 "What Apple's image classifier saw. These drive the content categories (Food, Pets, …). If a photo is in the wrong category, this shows why." = "מה שמסווג התמונות של אפל ראה. אלה מזינים את קטגוריות התוכן (אוכל, חיות מחמד, …). אם תמונה בקטגוריה הלא נכונה, כאן רואים למה.";
 "What we noticed" = "מה שמנו לב";
 "Why this photo?" = "למה התמונה הזאת?";
+"Will keep suggesting %@" = "נמשיך להציע %@";
 "Won't suggest %@ again" = "לא נציע %@ שוב";
 "You don't have any screenshots to clean up right now." = "אין לך כרגע צילומי מסך לניקוי.";
 "Your decisions" = "ההחלטות שלך";

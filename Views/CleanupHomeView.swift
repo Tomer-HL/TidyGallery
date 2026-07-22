@@ -436,7 +436,15 @@ struct CleanupHomeView: View {
             ReviewScreen(
                 stacks: coordinator.stacks,
                 onDeleted: { coordinator.noteDeleted(ids: $0) },
-                onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } }
+                onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } },
+                // The implicit keep after a deletion, and its reversal. Routed
+                // through the dedicated coordinator methods rather than plain
+                // ignore/stopIgnoring so that undoing reverses only what this
+                // action added — a survivor may already have been ignored
+                // deliberately, and un-ignoring that would override the user in
+                // the name of giving them control.
+                onAutoKeep: { ids in Task { await coordinator.autoIgnoreSurvivors(ids: ids) } },
+                onStopIgnoring: { Task { await coordinator.undoAutoIgnore() } }
             )
         }
     }

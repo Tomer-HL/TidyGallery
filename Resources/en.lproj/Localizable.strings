@@ -37,7 +37,7 @@
 "Delete %@?" = "Delete %@?";
 "Delete %lld" = "Delete %lld";
 "Deleted %@" = "Deleted %@";
-"Deleted %@ · kept %@" = "Deleted %@ · kept %@";
+"Deleted %@ · won't suggest %@ again" = "Deleted %@ · won't suggest %@ again";
 "Deleting…" = "Deleting…";
 "Deselect All" = "Deselect All";
 "Detected on-device" = "Detected on-device";
@@ -66,6 +66,7 @@
 "Ignored" = "Ignored";
 "Keep %lld — don't suggest again" = "Keep %lld — don't suggest again";
 "Keep all" = "Keep all";
+"Keep suggesting" = "Keep suggesting";
 "Keeping all — tap photos to remove" = "Keeping all — tap photos to remove";
 "Keeping the ★ best shot, removing %lld" = "Keeping the ★ best shot, removing %lld";
 "Landscapes, sunsets, and scenery detected on-device" = "Landscapes, sunsets, and scenery detected on-device";
@@ -162,6 +163,7 @@
 "What Apple's image classifier saw. These drive the content categories (Food, Pets, …). If a photo is in the wrong category, this shows why." = "What Apple's image classifier saw. These drive the content categories (Food, Pets, …). If a photo is in the wrong category, this shows why.";
 "What we noticed" = "What we noticed";
 "Why this photo?" = "Why this photo?";
+"Will keep suggesting %@" = "Will keep suggesting %@";
 "Won't suggest %@ again" = "Won't suggest %@ again";
 "You don't have any screenshots to clean up right now." = "You don't have any screenshots to clean up right now.";
 "Your decisions" = "Your decisions";

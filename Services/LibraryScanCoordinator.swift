@@ -990,6 +990,39 @@ final class LibraryScanCoordinator {
     /// surfaces this rather than letting the user believe a choice was saved.
     private(set) var ignoreListWriteFailed = false
 
+    /// Ids the *last* automatic "keep" actually added to the ignore list.
+    ///
+    /// The auto-keep after a deletion is passed every surviving photo in the
+    /// affected stacks, but some of those may already be ignored — the engine
+    /// deliberately keeps an ignored photo visible inside its duplicate stack
+    /// and only strips it from the pre-selection, so it can still be a
+    /// survivor. Re-ignoring it is harmless; *un*-ignoring it on Undo would
+    /// silently reverse a deliberate decision the user made earlier, possibly
+    /// in another session.
+    ///
+    /// So the reversal has to know what it added, not what it was offered. That
+    /// bookkeeping lives here because this is where `ignoredIDs` lives; a view
+    /// holding a closure over a list of ids cannot compute the difference.
+    private(set) var lastAutoIgnored: [PhotoAsset.ID] = []
+
+    /// Records the implicit "I'm keeping these" from a duplicate deletion,
+    /// remembering which ids were genuinely new so `undoAutoIgnore()` can undo
+    /// exactly this action and nothing else.
+    func autoIgnoreSurvivors(ids: [PhotoAsset.ID]) async {
+        lastAutoIgnored = ids.filter { !ignoredIDs.contains($0) }
+        guard !lastAutoIgnored.isEmpty else { return }
+        await ignore(ids: lastAutoIgnored)
+    }
+
+    /// Reverses the most recent automatic keep. No-op once it has been used or
+    /// if nothing was actually added.
+    func undoAutoIgnore() async {
+        let ids = lastAutoIgnored
+        lastAutoIgnored = []
+        guard !ids.isEmpty else { return }
+        await stopIgnoring(ids: ids)
+    }
+
     func ignore(ids: [PhotoAsset.ID]) async {
         guard !ids.isEmpty else { return }
         do {
