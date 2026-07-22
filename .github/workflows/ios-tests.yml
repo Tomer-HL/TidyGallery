@@ -92,6 +92,41 @@ jobs:
           fi
           echo "Both localizations are present in the bundle."
 
+      # Same class of failure as the localization check above, same reason for
+      # catching it here: an app with no icon and no privacy manifest builds,
+      # installs and runs perfectly. Nothing complains until App Store Connect
+      # rejects the upload — which blocks TestFlight, not just release, and is
+      # discovered at the least convenient moment.
+      - name: Verify the icon and privacy manifest reached the bundle
+        if: always()
+        run: |
+          APP="$(find ~/Library/Developer/Xcode/DerivedData -type d -name 'TidyGallery.app' -path '*Debug-iphonesimulator*' | head -1)"
+          if [ -z "$APP" ]; then echo "::error::No built TidyGallery.app found"; exit 1; fi
+          MISSING=0
+
+          # The asset catalog is compiled into Assets.car; the icon is also
+          # emitted as loose AppIcon*.png files at the bundle root.
+          if [ ! -f "$APP/Assets.car" ]; then
+            echo "::error::Assets.car missing — the asset catalog was not compiled in"
+            MISSING=1
+          fi
+          if ! ls "$APP"/AppIcon*.png >/dev/null 2>&1; then
+            echo "::error::No AppIcon*.png at the bundle root — App Store Connect will reject the upload"
+            MISSING=1
+          fi
+
+          if [ ! -f "$APP/PrivacyInfo.xcprivacy" ]; then
+            echo "::error::PrivacyInfo.xcprivacy missing from the bundle root"
+            echo "The app uses UserDefaults, a required-reason API, so submission fails validation without it."
+            MISSING=1
+          fi
+
+          if [ "$MISSING" = "1" ]; then
+            echo "Check the Resources/ entry and ASSETCATALOG_COMPILER_APPICON_NAME in project.yml."
+            exit 1
+          fi
+          echo "Icon and privacy manifest are both present in the bundle."
+
       - name: Upload test results
         if: always()   # keep the bundle even when tests fail, for debugging
         uses: actions/upload-artifact@v4

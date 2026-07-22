@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Privacy manifest. Required for App Store submission since spring 2024:
+	  without it, an app that touches a "required reason" API fails validation
+	  on upload — before TestFlight, not just before release.
+
+	  Every entry below was derived by grepping the target, not by intent.
+
+	  NSPrivacyTracking: false
+	    No tracking of any kind. There is no AdSupport, no
+	    AppTrackingTransparency, no attribution or analytics SDK, and no
+	    third-party packages at all — the only `dependencies:` entry in
+	    project.yml is the test bundle depending on the app.
+
+	  NSPrivacyTrackingDomains: empty
+	    There is no URLSession, URLRequest or NWConnection anywhere in the
+	    target. The app makes no network calls. (PHImageRequestOptions
+	    .isNetworkAccessAllowed is iOS fetching the user's own photo from their
+	    own iCloud account through Apple's framework; nothing is uploaded and
+	    there is no server on our side to upload to.)
+
+	  NSPrivacyCollectedDataTypes: empty
+	    Nothing leaves the device, so nothing is "collected" in the sense this
+	    key means. Photos are read via PHImageManager and analysed on-device by
+	    Vision; feature prints and scores persist to a local SwiftData store.
+	    Diagnostics reports are shared only when the user taps Share, and hold
+	    counts, timings and memory figures — no photo content, no identifiers.
+
+	  NSPrivacyAccessedAPITypes: one entry, below.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!--
+			  UserDefaults. Used in five places, all storing this app's own
+			  settings under this app's own keys:
+			    ScanScope        — the chosen scan window
+			    TuningSettings   — on-device detection thresholds
+			    ScanMetricsStore — the last diagnostics report + OOM marker
+			    OnboardingView   — whether the welcome screen has been seen
+			  No app group, no shared suite, nothing read back that this app did
+			  not write. CA92.1 is exactly that case.
+			-->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

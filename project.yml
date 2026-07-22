@@ -52,6 +52,13 @@ targets:
       # `Resources/en.lproj` inside the bundle, where iOS does not look for them.
       # As a group, XcodeGen recognises the .lproj directories and builds proper
       # variant groups, which land at the bundle root where they belong.
+      #
+      # The same group also carries Assets.xcassets (the app icon) and
+      # PrivacyInfo.xcprivacy. Both rely on the same behaviour: a group's files
+      # land at the bundle ROOT, which is where iOS looks for the compiled asset
+      # catalog and where App Store validation looks for the privacy manifest.
+      # `type: folder` here would nest them under `Resources/` and both would be
+      # silently ignored.
       - Resources
     settings:
       base:
@@ -63,6 +70,17 @@ targets:
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "TidyGallery analyses your photos entirely on-device to suggest duplicates you can clean up. Nothing is ever deleted without your confirmation."
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+        # App icon. Named explicitly rather than relying on the default, because
+        # the failure mode is silent: without an icon the app still builds and
+        # runs, and only App Store Connect rejects it — after the upload. That
+        # blocks TestFlight, not just release.
+        #
+        # A single 1024×1024 in the appiconset is deliberate: since Xcode 14 the
+        # toolchain downsamples every required size itself, so the alternative is
+        # a dozen near-identical PNGs that can drift out of sync with each other.
+        # Regenerate with `python3 Scripts/make_app_icon.py`.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
         # Export compliance. Declared here rather than answered by hand in App
         # Store Connect, because the hand-answered version is asked once per

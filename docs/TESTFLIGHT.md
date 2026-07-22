@@ -18,6 +18,24 @@ button.
 
 So the ask of testers is small and specific: **scan, then send the report.**
 
+## Two things that used to block this, now done
+
+An earlier version of this document sent you off to buy a developer membership
+without mentioning either of these. Both fail *after* upload, which is the worst
+time to find out, and both blocked TestFlight rather than just release:
+
+- **App icon.** There wasn't one — no asset catalog at all. An app with no icon
+  builds, installs and runs perfectly; only App Store Connect objects.
+  `Resources/Assets.xcassets` now holds a single 1024×1024 master, which Xcode
+  downsamples to every required size. Regenerate with
+  `python3 Scripts/make_app_icon.py` (needs Pillow).
+- **Privacy manifest.** `PrivacyInfo.xcprivacy` declares the one required-reason
+  API the app touches: `UserDefaults`, under `CA92.1` — the app's own settings
+  under the app's own keys, no shared suite.
+
+CI now checks both reached the built bundle, alongside the existing localization
+check, so neither can quietly regress.
+
 ## One-time setup
 
 ### 1. Apple Developer Program
