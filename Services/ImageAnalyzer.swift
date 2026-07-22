@@ -71,16 +71,32 @@ actor ImageAnalyzer {
         let faceRequest = VNDetectFaceLandmarksRequest()
         let classifyRequest = VNClassifyImageRequest()
 
+        // Apple's per-face capture quality — a trained judgement of which shot
+        // of the same face is best, which is exactly the question a duplicate
+        // stack asks. Runs in the same handler pass, so it costs one more
+        // request rather than another full image decode.
+        //
+        // Optional in the same sense classification is: if it fails, the
+        // geometry-derived signals still stand on their own.
+        let captureQualityRequest = VNDetectFaceCaptureQualityRequest()
+
         // Feature print, faces AND classification in ONE handler pass. Each
         // handler re-processes the image, so running classification separately
-        // doubled the Vision work per photo. Classification is optional, so if
-        // including it upsets the batch we retry with just the required pair.
+        // doubled the Vision work per photo. Optional requests degrade in
+        // order: drop capture quality first, then classification, keeping the
+        // required pair last.
         var classificationSucceeded = true
+        var captureQualitySucceeded = true
         do {
-            try handler.perform([featurePrintRequest, faceRequest, classifyRequest])
+            try handler.perform([featurePrintRequest, faceRequest, classifyRequest, captureQualityRequest])
         } catch {
-            classificationSucceeded = false
-            try handler.perform([featurePrintRequest, faceRequest])
+            captureQualitySucceeded = false
+            do {
+                try handler.perform([featurePrintRequest, faceRequest, classifyRequest])
+            } catch {
+                classificationSucceeded = false
+                try handler.perform([featurePrintRequest, faceRequest])
+            }
         }
 
         guard
@@ -92,7 +108,12 @@ actor ImageAnalyzer {
 
         let sharpness = BlurDetector.sharpness(of: image)
         let faces = faceRequest.results as? [VNFaceObservation] ?? []
-        let faceQuality = Self.evaluateFaces(faces)
+        // Capture quality comes from its own request's observations, which carry
+        // `faceCaptureQuality` — the landmarks request's do not populate it.
+        let qualityFaces = captureQualitySucceeded
+            ? (captureQualityRequest.results as? [VNFaceObservation] ?? [])
+            : []
+        let faceQuality = Self.evaluateFaces(faces, qualityFaces: qualityFaces)
 
         // On-device aesthetics via the newer async Vision request (best-effort).
         let aesthetics = await Self.aestheticsScore(for: image)
@@ -194,13 +215,33 @@ actor ImageAnalyzer {
 
     // MARK: - Face landmarks → eyes-open / smiling
 
-    private static func evaluateFaces(_ faces: [VNFaceObservation]) -> FaceQuality {
+    /// - Parameters:
+    ///   - faces: results from `VNDetectFaceLandmarksRequest` — geometry.
+    ///   - qualityFaces: results from `VNDetectFaceCaptureQualityRequest`.
+    ///     A separate array on purpose: the two requests return separate
+    ///     observations, and only the latter carries `faceCaptureQuality`.
+    ///     They are aggregated independently rather than matched face-to-face,
+    ///     because pairing them would mean matching bounding boxes between two
+    ///     detectors that can legitimately disagree about how many faces there
+    ///     are — needless fragility for a signal that is averaged anyway.
+    private static func evaluateFaces(
+        _ faces: [VNFaceObservation],
+        qualityFaces: [VNFaceObservation] = []
+    ) -> FaceQuality {
         guard !faces.isEmpty else { return .noFaces }
 
         var eyeScores: [Double] = []
         var smileScores: [Double] = []
+        var framingScores: [Double] = []
 
         for face in faces {
+            // Framing needs only the bounding box, so it is computed for every
+            // detected face — including ones whose landmarks Vision couldn't
+            // resolve, which are often precisely the faces at the frame edge.
+            if let framing = FramingEvaluator.score(faceBox: face.boundingBox) {
+                framingScores.append(framing)
+            }
+
             guard let landmarks = face.landmarks else { continue }
 
             // Eyes: average EAR of whichever eyes are present.
@@ -225,11 +266,24 @@ actor ImageAnalyzer {
             }
         }
 
-        // Aggregate: worst eyes (one blinker drags it down), best smile.
+        let captureScores = qualityFaces.compactMap { $0.faceCaptureQuality.map(Double.init) }
+
+        func mean(_ values: [Double]) -> Double? {
+            guard !values.isEmpty else { return nil }
+            return values.reduce(0, +) / Double(values.count)
+        }
+
+        // Aggregation differs per signal, because the question does:
+        //   eyes    — worst, since one blink ruins the shot for everyone
+        //   smile   — mean, so "most people smiling" beats "one person smiling"
+        //   framing — worst, since a clipped face is a defect on its own
+        //   quality — mean, it is already a holistic per-face judgement
         return FaceQuality(
             faceCount: faces.count,
             eyesOpenScore: eyeScores.min(),
-            smileScore: smileScores.max()
+            smileScore: mean(smileScores),
+            captureQuality: mean(captureScores),
+            framingScore: framingScores.min()
         )
     }
 }

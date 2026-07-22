@@ -159,6 +159,95 @@ struct SafetyInvariantTests {
         #expect(stacks.first?.bestShotID == "best")
     }
 
+    // MARK: - Face signals combine without any one of them dominating
+    //
+    // Best-shot selection now weighs eyes, Apple's capture quality, smile and
+    // framing. The risk of adding signals is that a preference starts
+    // outvoting a defect — that a well-framed photo of someone blinking beats
+    // a plainly-composed one where their eyes are open.
+
+    @Test("A blink still loses to open eyes, however good the rest is")
+    func blinkStillLoses() {
+        let blinking = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.05, smileScore: 1.0,
+            captureQuality: 0.9, framingScore: 1.0
+        )
+        let awake = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.95, smileScore: 0.2,
+            captureQuality: 0.5, framingScore: 0.5
+        )
+        // Not merely lower — lower by a margin worth trusting. This ordering
+        // held at a 0.03 gap under an earlier weighting, which is close enough
+        // to a tie that any later tweak could have flipped it silently.
+        let gap = (awake.combinedScore ?? 0) - (blinking.combinedScore ?? 1)
+        #expect(gap > 0.08, "a blink must lose decisively, not narrowly")
+    }
+
+    @Test("A blink loses on realistic inputs too, not just adversarial ones")
+    func blinkLosesInPractice() {
+        // Apple's capture quality already penalises a blink, so the two signals
+        // correlate in real photos. That correlation is welcome but must not be
+        // what the invariant rests on — hence the adversarial case above.
+        let blinking = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.1, smileScore: 0.7,
+            captureQuality: 0.35, framingScore: 0.9
+        )
+        let awake = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.9, smileScore: 0.7,
+            captureQuality: 0.75, framingScore: 0.9
+        )
+        #expect((blinking.combinedScore ?? 1) < (awake.combinedScore ?? 0))
+    }
+
+    @Test("Framing alone cannot outvote everything else")
+    func framingIsARefinementNotAVeto() {
+        // Same photo, one slightly clipped. It should lose — but only just,
+        // because being cut off matters less than being sharp and awake.
+        let wellFramed = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.8, smileScore: 0.6,
+            captureQuality: 0.7, framingScore: 1.0
+        )
+        let clipped = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.8, smileScore: 0.6,
+            captureQuality: 0.7, framingScore: 0.2
+        )
+        let gap = (wellFramed.combinedScore ?? 0) - (clipped.combinedScore ?? 0)
+        #expect(gap > 0)
+        #expect(gap < 0.15, "framing should nudge the ranking, not decide it")
+    }
+
+    @Test("Unmeasured signals redistribute rather than counting as average")
+    func missingSignalsDoNotDragTowardTheMiddle() {
+        // A face whose lips Vision couldn't resolve should be judged on what
+        // WAS measured. Substituting 0.5 would penalise a great photo for a
+        // detection failure that says nothing about it.
+        let measuredOnly = FaceQuality(
+            faceCount: 1, eyesOpenScore: 0.9, smileScore: nil,
+            captureQuality: 0.9, framingScore: nil
+        )
+        #expect(abs((measuredOnly.combinedScore ?? 0) - 0.9) < 0.0001)
+    }
+
+    @Test("Faces found but nothing measurable is neutral, not zero")
+    func unmeasurableFaceIsNeutral() {
+        // Scoring 0 would make "Vision saw a face but resolved nothing" look
+        // identical to "everyone is blinking", and pre-select a photo that may
+        // be perfectly good.
+        let opaque = FaceQuality(
+            faceCount: 2, eyesOpenScore: nil, smileScore: nil,
+            captureQuality: nil, framingScore: nil
+        )
+        #expect(opaque.combinedScore == 0.5)
+    }
+
+    @Test("A photo with no faces still declines to have an opinion")
+    func noFacesStaysNil() {
+        // The composite redistributes the face weight when this is nil, so a
+        // landscape isn't penalised for lacking people.
+        #expect(FaceQuality.noFaces.combinedScore == nil)
+        #expect(!FaceQuality.noFaces.hasFaces)
+    }
+
     // MARK: - Never act on what the user cannot see
     //
     // The cleanup grid holds `selected` as a flat set of ids beside a

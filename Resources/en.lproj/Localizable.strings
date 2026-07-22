@@ -33,6 +33,7 @@
 "Couldn't create album: %@" = "Couldn't create album: %@";
 "Couldn't delete: %@" = "Couldn't delete: %@";
 "Couldn't save your choice" = "Couldn't save your choice";
+"Cut off at the edge of the frame" = "Cut off at the edge of the frame";
 "Delete %@" = "Delete %@";
 "Delete %@?" = "Delete %@?";
 "Delete %lld" = "Delete %lld";
@@ -77,6 +78,7 @@
 "Measuring library size…" = "Measuring library size…";
 "Minimum size for a photo to count as a big file." = "Minimum size for a photo to count as a big file.";
 "Most of what people actually revisit" = "Most of what people actually revisit";
+"Most people aren't smiling" = "Most people aren't smiling";
 "Nature & scenery" = "Nature & scenery";
 "Never suggest" = "Never suggest";
 "Newest first" = "Newest first";
@@ -91,7 +93,6 @@
 "No screenshots" = "No screenshots";
 "No selfies" = "No selfies";
 "No videos" = "No videos";
-"Nobody's smiling" = "Nobody's smiling";
 "Not available" = "Not available";
 "Nothing ignored" = "Nothing ignored";
 "Nothing looks blurry" = "Nothing looks blurry";
@@ -131,6 +132,7 @@
 "Sharpness" = "Sharpness";
 "Smallest first" = "Smallest first";
 "Softer than the best shot" = "Softer than the best shot";
+"Someone's cut off at the edge" = "Someone's cut off at the edge";
 "Someone's eyes look closed" = "Someone's eyes look closed";
 "Sort" = "Sort";
 "Standalone shots that look soft — review before deleting" = "Standalone shots that look soft — review before deleting";
@@ -144,6 +146,7 @@
 "There are no videos in your library to review." = "There are no videos in your library to review.";
 "They weren't analysed, so they're missing from Duplicates and the content categories. Analysing them means downloading them, which uses data." = "They weren't analysed, so they're missing from Duplicates and the content categories. Analysing them means downloading them, which uses data.";
 "They'll move to Recently Deleted, where you can recover them for 30 days." = "They'll move to Recently Deleted, where you can recover them for 30 days.";
+"They're not smiling" = "They're not smiling";
 "This is the best shot in its group" = "This is the best shot in its group";
 "Thorough, but the first scan takes a while" = "Thorough, but the first scan takes a while";
 "Tidy your gallery" = "Tidy your gallery";

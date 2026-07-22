@@ -33,6 +33,7 @@
 "Couldn't create album: %@" = "לא הצלחנו ליצור אלבום: %@";
 "Couldn't delete: %@" = "לא הצלחנו למחוק: %@";
 "Couldn't save your choice" = "לא הצלחנו לשמור את הבחירה שלך";
+"Cut off at the edge of the frame" = "חתוך בקצה התמונה";
 "Delete %@" = "מחק %@";
 "Delete %@?" = "למחוק %@?";
 "Delete %lld" = "מחק %lld";
@@ -77,6 +78,7 @@
 "Measuring library size…" = "מודדים את גודל הספרייה…";
 "Minimum size for a photo to count as a big file." = "הגודל המזערי שממנו תמונה נחשבת קובץ גדול.";
 "Most of what people actually revisit" = "רוב מה שבאמת חוזרים אליו";
+"Most people aren't smiling" = "רוב האנשים לא מחייכים";
 "Nature & scenery" = "טבע ונופים";
 "Never suggest" = "אל תציע שוב";
 "Newest first" = "החדשות קודם";
@@ -91,7 +93,6 @@
 "No screenshots" = "אין צילומי מסך";
 "No selfies" = "אין תמונות סלפי";
 "No videos" = "אין סרטונים";
-"Nobody's smiling" = "אף אחד לא מחייך";
 "Not available" = "לא זמין";
 "Nothing ignored" = "לא ויתרת על כלום";
 "Nothing looks blurry" = "שום דבר לא נראה מטושטש";
@@ -131,6 +132,7 @@
 "Sharpness" = "חדות";
 "Smallest first" = "הקטנות קודם";
 "Softer than the best shot" = "רכה יותר מהתמונה הטובה ביותר";
+"Someone's cut off at the edge" = "מישהו חתוך בקצה";
 "Someone's eyes look closed" = "נראה שלמישהו העיניים עצומות";
 "Sort" = "מיון";
 "Standalone shots that look soft — review before deleting" = "תמונות בודדות שנראות רכות — כדאי לבדוק לפני מחיקה";
@@ -144,6 +146,7 @@
 "There are no videos in your library to review." = "אין סרטונים בספרייה שלך לסקירה.";
 "They weren't analysed, so they're missing from Duplicates and the content categories. Analysing them means downloading them, which uses data." = "הן לא נותחו, ולכן הן חסרות בכפילויות ובקטגוריות התוכן. כדי לנתח אותן צריך להוריד אותן, וזה צורך נתונים.";
 "They'll move to Recently Deleted, where you can recover them for 30 days." = "הן יעברו ל״נמחקו לאחרונה״, ותוכל לשחזר אותן במשך 30 יום.";
+"They're not smiling" = "הוא לא מחייך";
 "This is the best shot in its group" = "זו התמונה הטובה ביותר בקבוצה";
 "Thorough, but the first scan takes a while" = "יסודי, אבל הסריקה הראשונה לוקחת זמן";
 "Tidy your gallery" = "לסדר את הגלריה";

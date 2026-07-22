@@ -32,6 +32,10 @@ struct ScoreExplanation {
     private static let notSmilingBelow = 0.3
     private static let meaningfulSharpnessGap = 0.10
     private static let meaningfulEyesGap = 0.15
+    /// Framing is dominated by the clipping term, which only drops below 1 when
+    /// a face actually runs off the edge — so this only has to be low enough to
+    /// exclude the mild placement penalty every off-centre portrait carries.
+    private static let poorlyFramedBelow = 0.6
 
     /// Reasons for a photo, optionally compared against its group's best shot.
     ///
@@ -73,7 +77,28 @@ struct ScoreExplanation {
             }
             if let smile = score.faceQuality.smileScore, smile < notSmilingBelow {
                 reasons.append(
-                    Reason(text: String(localized: "Nobody's smiling"), systemImage: "face.dashed", tone: .neutral)
+                    Reason(
+                        text: score.faceQuality.faceCount > 1
+                            // Smile is now the MEAN across faces, so a low value
+                            // means most people aren't smiling — not that none
+                            // are. Saying "nobody" would be a claim the number
+                            // no longer supports.
+                            ? String(localized: "Most people aren't smiling")
+                            : String(localized: "They're not smiling"),
+                        systemImage: "face.dashed",
+                        tone: .neutral
+                    )
+                )
+            }
+            if let framing = score.faceQuality.framingScore, framing < poorlyFramedBelow {
+                reasons.append(
+                    Reason(
+                        text: score.faceQuality.faceCount > 1
+                            ? String(localized: "Someone's cut off at the edge")
+                            : String(localized: "Cut off at the edge of the frame"),
+                        systemImage: "crop",
+                        tone: .caution
+                    )
                 )
             }
         }

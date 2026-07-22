@@ -30,7 +30,12 @@ final class CachedAnalysis {
     ///   v5 → tightened confidence + pruned keywords, face veto on Documents,
     ///        and selfies moved to the system smart album
     ///   v6 → stores the classifier's top labels (for the "Why this photo?" sheet)
-    static let currentSchemaVersion = 6
+    ///   v7 → best-shot scoring gains Vision's face capture quality and a
+    ///        subject-framing term, and smile is averaged across faces rather
+    ///        than taking the best. Stored scores were produced under the old
+    ///        model, so they must be recomputed or a stack would be ranked by
+    ///        two different rules at once.
+    static let currentSchemaVersion = 7
 
     /// `PHAsset.localIdentifier`. Unique so we can upsert by identity.
     @Attribute(.unique) var localIdentifier: String

@@ -125,7 +125,6 @@
   "Favourite — never suggested for deletion": "מועדפת — לעולם לא נציע למחוק",
   "Someone's eyes look closed": "נראה שלמישהו העיניים עצומות",
   "Their eyes look closed": "נראה שהעיניים עצומות",
-  "Nobody's smiling": "אף אחד לא מחייך",
   "Looks soft or out of focus": "נראית רכה או לא בפוקוס",
   "Softer than the best shot": "רכה יותר מהתמונה הטובה ביותר",
   "Eyes are more open in the best shot": "העיניים פקוחות יותר בתמונה הטובה ביותר",
@@ -181,5 +180,9 @@
   "Will keep suggesting %@": "נמשיך להציע %@",
   "Deleted %@ · won't suggest %@ again": "‏%1$@ נמחקו · לא נציע %2$@ שוב",
   "Keep suggesting": "המשך להציע",
-  "Stop scanning": "עצור סריקה"
+  "Stop scanning": "עצור סריקה",
+  "Most people aren't smiling": "רוב האנשים לא מחייכים",
+  "They're not smiling": "הוא לא מחייך",
+  "Someone's cut off at the edge": "מישהו חתוך בקצה",
+  "Cut off at the edge of the frame": "חתוך בקצה התמונה"
 }
