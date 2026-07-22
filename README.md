@@ -162,7 +162,15 @@ use the latest run) → when green, open the run → **Artifacts** → download
 **3. Trust the certificate.** On the iPhone: Settings → General → **VPN & Device
 Management** → tap your Apple ID → **Trust**.
 
-**4. Launch TidyGallery.** It'll ask for photo access on first run — that's the
+**4. Enable Developer Mode.** Settings → **Privacy & Security** → **Developer
+Mode** → on → **Restart** → **Turn On** after unlocking. Required on iOS 16 and
+later for any development-signed app; without it the app installs and then
+refuses to launch, which looks like a broken build rather than a missing
+setting. Note the menu item **only appears once a development-signed app is
+installed**, so it comes after step 2, not before. TestFlight builds don't need
+this.
+
+**5. Launch TidyGallery.** It'll ask for photo access on first run — that's the
 `NSPhotoLibraryUsageDescription` prompt. Then tap **Scan my library**.
 
 If a step fails (Apple ID two-factor, driver issues, "app not available"),

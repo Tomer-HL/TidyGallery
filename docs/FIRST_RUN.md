@@ -44,7 +44,26 @@ Two limits of free sideloading, worth knowing before you plan around them: the
 app **expires after 7 days**, and a free Apple ID allows **3 sideloaded apps**
 at once.
 
-## 3. First launch
+## 3. Enable Developer Mode
+
+Required since iOS 16 for anything development-signed, which includes every
+sideloaded app. Without it TidyGallery installs perfectly and then simply
+refuses to launch — which reads like a broken build rather than a missing
+setting.
+
+Settings → **Privacy & Security** → **Developer Mode** → toggle on → **Restart**
+when prompted → unlock after the restart → **Turn On** at the confirmation.
+
+**The menu item only appears after a development-signed app is installed**, so
+do this *after* step 2, not before. If you can't find Developer Mode in
+Privacy & Security, the install hasn't landed yet.
+
+Two notes. This is a genuine, if small, reduction in device security — it exists
+precisely so sideloading can't happen silently — and it stays on until you turn
+it off. And it's a sideloading-only concern: **TestFlight builds don't need it**,
+so this step disappears the day the app ships that way.
+
+## 4. First launch
 
 1. Open TidyGallery. It'll show a one-time welcome screen.
 2. **Allow access to all photos** when iOS asks.
@@ -53,7 +72,7 @@ at once.
      the point of this run.
 3. Don't tap **Scan my library** yet.
 
-## 4. Two things before you scan
+## 5. Two things before you scan
 
 **Confirm "Analyse iCloud photos" is off.** Gear → Detection settings. It's off
 by default, so this is a check rather than a change — but if you use Optimize
@@ -70,7 +89,7 @@ once you have a clean baseline.
 
 ---
 
-## 5. The run
+## 6. The run
 
 ### Stage A — smoke test (a minute or two)
 
