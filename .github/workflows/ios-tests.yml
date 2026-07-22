@@ -24,6 +24,24 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # Runs before the build on purpose: a missing translation is a content
+      # bug, not a compile error, so nothing downstream would ever catch it.
+      # Failing here means the message names the exact string.
+      - name: Check localization coverage
+        run: python3 Scripts/build_localizations.py --check
+
+      # The committed .lproj files must match what the JSON sources produce.
+      # Regenerating and diffing is what stops someone hand-editing the
+      # generated output and having it silently overwritten later.
+      - name: Verify generated localization files are up to date
+        run: |
+          python3 Scripts/build_localizations.py
+          git diff --exit-code -- Resources/ || {
+            echo "::error::Resources/*.lproj is out of date."
+            echo "Run: python3 Scripts/build_localizations.py — then commit the result."
+            exit 1
+          }
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

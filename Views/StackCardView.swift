@@ -39,7 +39,7 @@ struct StackCardView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(stack.assets.count) similar photos")
+                Text(ItemNoun.similarPhoto.counted(stack.assets.count))
                     .font(.headline)
                     .foregroundStyle(Theme.Colors.textPrimary)
                 Text(subtitle)
@@ -55,17 +55,17 @@ struct StackCardView: View {
                     .padding(.horizontal, Theme.Spacing.m)
                     .padding(.vertical, Theme.Spacing.xs)
                     .background(Theme.Colors.destructive.opacity(0.12), in: Capsule())
-                    .accessibilityLabel("\(stack.checkedForDeletion.count) marked for deletion")
+                    .accessibilityLabel(String(localized: "\(stack.checkedForDeletion.count) marked for deletion"))
             }
         }
     }
 
     private var subtitle: String {
         let n = stack.checkedForDeletion.count
-        if n == 0 { return "Keeping all — tap photos to remove" }
-        var text = "Keeping the ★ best shot, removing \(n)"
+        if n == 0 { return String(localized: "Keeping all — tap photos to remove") }
+        var text = String(localized: "Keeping the ★ best shot, removing \(n)")
         if reclaimBytes > 0 {
-            text += " · frees ~\(reclaimBytes.formatted(.byteCount(style: .file)))"
+            text += String(localized: " · frees ~\(reclaimBytes.formatted(.byteCount(style: .file)))")
         }
         return text
     }

@@ -21,12 +21,14 @@ enum CleanupSortOrder: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// Localized here rather than at the call site: `Text(order.label)` receives
+    /// a `String`, which SwiftUI passes through untranslated.
     var label: String {
         switch self {
-        case .newest: "Newest first"
-        case .oldest: "Oldest first"
-        case .largest: "Largest first"
-        case .smallest: "Smallest first"
+        case .newest: String(localized: "Newest first")
+        case .oldest: String(localized: "Oldest first")
+        case .largest: String(localized: "Largest first")
+        case .smallest: String(localized: "Smallest first")
         }
     }
 
@@ -54,10 +56,10 @@ enum CleanupAgeFilter: String, CaseIterable, Identifiable, Sendable {
 
     var label: String {
         switch self {
-        case .all: "Any age"
-        case .pastYear: "Past year"
-        case .oneToThreeYears: "1–3 years old"
-        case .olderThanThreeYears: "Older than 3 years"
+        case .all: String(localized: "Any age")
+        case .pastYear: String(localized: "Past year")
+        case .oneToThreeYears: String(localized: "1–3 years old")
+        case .olderThanThreeYears: String(localized: "Older than 3 years")
         }
     }
 

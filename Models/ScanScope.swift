@@ -24,21 +24,25 @@ enum ScanScope: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var id: String { rawValue }
 
+    // These are plain `String`s handed to `Text(_:)` and `Menu` labels. SwiftUI
+    // only localizes string *literals* written at the call site, so copy that
+    // lives in a model like this one has to localize itself — otherwise it is
+    // the one part of the interface that stays English forever.
     var label: String {
         switch self {
-        case .lastMonth: "Past month"
-        case .threeMonths: "Past 3 months"
-        case .year: "Past year"
-        case .allTime: "Entire library"
+        case .lastMonth: String(localized: "Past month")
+        case .threeMonths: String(localized: "Past 3 months")
+        case .year: String(localized: "Past year")
+        case .allTime: String(localized: "Entire library")
         }
     }
 
     var detail: String {
         switch self {
-        case .lastMonth: "Fastest — recent clutter only"
-        case .threeMonths: "A good balance for a quick clean-up"
-        case .year: "Most of what people actually revisit"
-        case .allTime: "Thorough, but the first scan takes a while"
+        case .lastMonth: String(localized: "Fastest — recent clutter only")
+        case .threeMonths: String(localized: "A good balance for a quick clean-up")
+        case .year: String(localized: "Most of what people actually revisit")
+        case .allTime: String(localized: "Thorough, but the first scan takes a while")
         }
     }
 

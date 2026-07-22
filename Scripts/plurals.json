@@ -1,0 +1,52 @@
+{
+  "_comment": "Plural forms per ItemNoun case, per language. English has two categories (one, other). Hebrew has FOUR: one, two, many, other — 'two' is a genuinely distinct form (שתי תמונות), which is the whole reason this app cannot pluralize by appending a letter. CLDR decides which category a number falls into; we only supply the wording. Note the singular forms carry no digit at all ('one photo' / 'תמונה אחת'), which is the natural reading in both languages and is impossible to express with string concatenation.",
+
+  "count.photo": {
+    "en": { "one": "one photo", "other": "%lld photos" },
+    "he": { "one": "תמונה אחת", "two": "שתי תמונות", "many": "%lld תמונות", "other": "%lld תמונות" }
+  },
+  "count.video": {
+    "en": { "one": "one video", "other": "%lld videos" },
+    "he": { "one": "סרטון אחד", "two": "שני סרטונים", "many": "%lld סרטונים", "other": "%lld סרטונים" }
+  },
+  "count.screenshot": {
+    "en": { "one": "one screenshot", "other": "%lld screenshots" },
+    "he": { "one": "צילום מסך אחד", "two": "שני צילומי מסך", "many": "%lld צילומי מסך", "other": "%lld צילומי מסך" }
+  },
+  "count.recording": {
+    "en": { "one": "one recording", "other": "%lld recordings" },
+    "he": { "one": "הקלטה אחת", "two": "שתי הקלטות", "many": "%lld הקלטות", "other": "%lld הקלטות" }
+  },
+  "count.document": {
+    "en": { "one": "one document", "other": "%lld documents" },
+    "he": { "one": "מסמך אחד", "two": "שני מסמכים", "many": "%lld מסמכים", "other": "%lld מסמכים" }
+  },
+  "count.selfie": {
+    "en": { "one": "one selfie", "other": "%lld selfies" },
+    "he": { "one": "סלפי אחד", "two": "שני סלפי", "many": "%lld תמונות סלפי", "other": "%lld תמונות סלפי" }
+  },
+  "count.foodPhoto": {
+    "en": { "one": "one food photo", "other": "%lld food photos" },
+    "he": { "one": "תמונת אוכל אחת", "two": "שתי תמונות אוכל", "many": "%lld תמונות אוכל", "other": "%lld תמונות אוכל" }
+  },
+  "count.petPhoto": {
+    "en": { "one": "one pet photo", "other": "%lld pet photos" },
+    "he": { "one": "תמונת חיה אחת", "two": "שתי תמונות חיות", "many": "%lld תמונות חיות", "other": "%lld תמונות חיות" }
+  },
+  "count.copy": {
+    "en": { "one": "one copy", "other": "%lld copies" },
+    "he": { "one": "עותק אחד", "two": "שני עותקים", "many": "%lld עותקים", "other": "%lld עותקים" }
+  },
+  "count.group": {
+    "en": { "one": "one group", "other": "%lld groups" },
+    "he": { "one": "קבוצה אחת", "two": "שתי קבוצות", "many": "%lld קבוצות", "other": "%lld קבוצות" }
+  },
+  "count.similarPhoto": {
+    "en": { "one": "one similar photo", "other": "%lld similar photos" },
+    "he": { "one": "תמונה דומה אחת", "two": "שתי תמונות דומות", "many": "%lld תמונות דומות", "other": "%lld תמונות דומות" }
+  },
+  "count.safeDuplicate": {
+    "en": { "one": "one safe duplicate", "other": "%lld safe duplicates" },
+    "he": { "one": "כפילות בטוחה אחת", "two": "שתי כפילויות בטוחות", "many": "%lld כפילויות בטוחות", "other": "%lld כפילויות בטוחות" }
+  }
+}

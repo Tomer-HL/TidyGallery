@@ -65,7 +65,7 @@ struct IgnoredAssetsScreen: View {
                         isSelected: selected.contains(asset.id),
                         isVideo: asset.isVideo,
                         subtitle: nil,
-                        noun: "ignored photo",
+                        noun: .photo,
                         onToggle: { toggle(asset.id) }
                     )
                 }
@@ -83,7 +83,7 @@ struct IgnoredAssetsScreen: View {
                 assets.removeAll { removed.contains($0.id) }
                 selected.removeAll()
                 onRestore(ids)
-                Task { await flashBanner("Restored \(ids.count) photo\(ids.count == 1 ? "" : "s")") }
+                Task { await flashBanner(String(localized: "Restored \(ItemNoun.photo.counted(ids.count))")) }
             } label: {
                 HStack(spacing: Theme.Spacing.s) {
                     Image(systemName: "arrow.uturn.backward")

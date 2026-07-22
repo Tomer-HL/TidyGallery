@@ -51,7 +51,7 @@ struct ScoreExplanation {
         if score.isFavorite {
             reasons.append(
                 Reason(
-                    text: "Favourite — never suggested for deletion",
+                    text: String(localized: "Favourite — never suggested for deletion"),
                     systemImage: "heart.fill",
                     tone: .positive
                 )
@@ -64,8 +64,8 @@ struct ScoreExplanation {
                 reasons.append(
                     Reason(
                         text: score.faceQuality.faceCount > 1
-                            ? "Someone's eyes look closed"
-                            : "Their eyes look closed",
+                            ? String(localized: "Someone's eyes look closed")
+                            : String(localized: "Their eyes look closed"),
                         systemImage: "eye.slash",
                         tone: .caution
                     )
@@ -73,14 +73,14 @@ struct ScoreExplanation {
             }
             if let smile = score.faceQuality.smileScore, smile < notSmilingBelow {
                 reasons.append(
-                    Reason(text: "Nobody's smiling", systemImage: "face.dashed", tone: .neutral)
+                    Reason(text: String(localized: "Nobody's smiling"), systemImage: "face.dashed", tone: .neutral)
                 )
             }
         }
 
         if score.sharpness <= config.blurrySinglesSharpnessCeiling {
             reasons.append(
-                Reason(text: "Looks soft or out of focus", systemImage: "camera.metering.none", tone: .caution)
+                Reason(text: String(localized: "Looks soft or out of focus"), systemImage: "camera.metering.none", tone: .caution)
             )
         }
 
@@ -88,32 +88,32 @@ struct ScoreExplanation {
         if let best {
             if best.sharpness - score.sharpness >= meaningfulSharpnessGap {
                 reasons.append(
-                    Reason(text: "Softer than the best shot", systemImage: "arrow.down.right", tone: .caution)
+                    Reason(text: String(localized: "Softer than the best shot"), systemImage: "arrow.down.right", tone: .caution)
                 )
             }
             if let bestEyes = best.faceQuality.eyesOpenScore,
                let eyes = score.faceQuality.eyesOpenScore,
                bestEyes - eyes >= meaningfulEyesGap {
                 reasons.append(
-                    Reason(text: "Eyes are more open in the best shot", systemImage: "eye", tone: .caution)
+                    Reason(text: String(localized: "Eyes are more open in the best shot"), systemImage: "eye", tone: .caution)
                 )
             }
 
             let gap = best.composite(using: config) - score.composite(using: config)
             if gap >= config.preselectQualityMargin {
                 reasons.append(
-                    Reason(text: "Clearly lower quality than the best shot", systemImage: "chart.line.downtrend.xyaxis", tone: .caution)
+                    Reason(text: String(localized: "Clearly lower quality than the best shot"), systemImage: "chart.line.downtrend.xyaxis", tone: .caution)
                 )
             } else if gap > 0 {
                 reasons.append(
-                    Reason(text: "Very close in quality to the best shot", systemImage: "equal.circle", tone: .neutral)
+                    Reason(text: String(localized: "Very close in quality to the best shot"), systemImage: "equal.circle", tone: .neutral)
                 )
             }
         }
 
         if reasons.isEmpty {
             reasons.append(
-                Reason(text: "Nothing stands out — yours to judge", systemImage: "hand.raised", tone: .neutral)
+                Reason(text: String(localized: "Nothing stands out — yours to judge"), systemImage: "hand.raised", tone: .neutral)
             )
         }
         return reasons
@@ -121,26 +121,38 @@ struct ScoreExplanation {
 
     /// The metric bars shown alongside the reasons.
     struct Metric: Identifiable, Sendable {
+        /// Localized — this is display copy, not an identifier.
         let name: String
         /// `nil` when the metric doesn't apply (e.g. faces in a landscape).
         let value: Double?
         let unavailableNote: String?
 
-        var id: String { name }
+        /// A stable key that does NOT change with the display language. Using
+        /// `name` here would have made every row's SwiftUI identity shift when
+        /// the interface language changed, which is exactly the sort of thing
+        /// that surfaces as a mysterious animation glitch in one language only.
+        let id: String
     }
 
     static func metrics(for score: ShotScore) -> [Metric] {
         [
-            Metric(name: "Sharpness", value: score.sharpness, unavailableNote: nil),
             Metric(
-                name: "Aesthetics",
-                value: score.aesthetics,
-                unavailableNote: score.aesthetics == nil ? "Not available" : nil
+                name: String(localized: "Sharpness"),
+                value: score.sharpness,
+                unavailableNote: nil,
+                id: "sharpness"
             ),
             Metric(
-                name: "Face quality",
+                name: String(localized: "Aesthetics"),
+                value: score.aesthetics,
+                unavailableNote: score.aesthetics == nil ? String(localized: "Not available") : nil,
+                id: "aesthetics"
+            ),
+            Metric(
+                name: String(localized: "Face quality"),
                 value: score.faceQuality.combinedScore,
-                unavailableNote: score.faceQuality.hasFaces ? nil : "No faces detected"
+                unavailableNote: score.faceQuality.hasFaces ? nil : String(localized: "No faces detected"),
+                id: "faceQuality"
             )
         ]
     }

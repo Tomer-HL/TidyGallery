@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>count.copy</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>עותק אחד</string>
+			<key>two</key>
+			<string>שני עותקים</string>
+			<key>many</key>
+			<string>%lld עותקים</string>
+			<key>other</key>
+			<string>%lld עותקים</string>
+		</dict>
+	</dict>
+	<key>count.document</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>מסמך אחד</string>
+			<key>two</key>
+			<string>שני מסמכים</string>
+			<key>many</key>
+			<string>%lld מסמכים</string>
+			<key>other</key>
+			<string>%lld מסמכים</string>
+		</dict>
+	</dict>
+	<key>count.foodPhoto</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>תמונת אוכל אחת</string>
+			<key>two</key>
+			<string>שתי תמונות אוכל</string>
+			<key>many</key>
+			<string>%lld תמונות אוכל</string>
+			<key>other</key>
+			<string>%lld תמונות אוכל</string>
+		</dict>
+	</dict>
+	<key>count.group</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>קבוצה אחת</string>
+			<key>two</key>
+			<string>שתי קבוצות</string>
+			<key>many</key>
+			<string>%lld קבוצות</string>
+			<key>other</key>
+			<string>%lld קבוצות</string>
+		</dict>
+	</dict>
+	<key>count.petPhoto</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>תמונת חיה אחת</string>
+			<key>two</key>
+			<string>שתי תמונות חיות</string>
+			<key>many</key>
+			<string>%lld תמונות חיות</string>
+			<key>other</key>
+			<string>%lld תמונות חיות</string>
+		</dict>
+	</dict>
+	<key>count.photo</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>תמונה אחת</string>
+			<key>two</key>
+			<string>שתי תמונות</string>
+			<key>many</key>
+			<string>%lld תמונות</string>
+			<key>other</key>
+			<string>%lld תמונות</string>
+		</dict>
+	</dict>
+	<key>count.recording</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>הקלטה אחת</string>
+			<key>two</key>
+			<string>שתי הקלטות</string>
+			<key>many</key>
+			<string>%lld הקלטות</string>
+			<key>other</key>
+			<string>%lld הקלטות</string>
+		</dict>
+	</dict>
+	<key>count.safeDuplicate</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>כפילות בטוחה אחת</string>
+			<key>two</key>
+			<string>שתי כפילויות בטוחות</string>
+			<key>many</key>
+			<string>%lld כפילויות בטוחות</string>
+			<key>other</key>
+			<string>%lld כפילויות בטוחות</string>
+		</dict>
+	</dict>
+	<key>count.screenshot</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>צילום מסך אחד</string>
+			<key>two</key>
+			<string>שני צילומי מסך</string>
+			<key>many</key>
+			<string>%lld צילומי מסך</string>
+			<key>other</key>
+			<string>%lld צילומי מסך</string>
+		</dict>
+	</dict>
+	<key>count.selfie</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>סלפי אחד</string>
+			<key>two</key>
+			<string>שני סלפי</string>
+			<key>many</key>
+			<string>%lld תמונות סלפי</string>
+			<key>other</key>
+			<string>%lld תמונות סלפי</string>
+		</dict>
+	</dict>
+	<key>count.similarPhoto</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>תמונה דומה אחת</string>
+			<key>two</key>
+			<string>שתי תמונות דומות</string>
+			<key>many</key>
+			<string>%lld תמונות דומות</string>
+			<key>other</key>
+			<string>%lld תמונות דומות</string>
+		</dict>
+	</dict>
+	<key>count.video</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>סרטון אחד</string>
+			<key>two</key>
+			<string>שני סרטונים</string>
+			<key>many</key>
+			<string>%lld סרטונים</string>
+			<key>other</key>
+			<string>%lld סרטונים</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

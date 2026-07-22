@@ -111,11 +111,11 @@ struct AssetCleanupScreen: View {
         .task { await loadSizes() }
         .safeAreaInset(edge: .bottom) { deleteBar }
         .confirmationDialog(
-            "Delete \(selected.count) \(noun(selected.count))?",
+            String(localized: "Delete \(counted(selected.count))?"),
             isPresented: $showConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete \(selected.count)", role: .destructive) {
+            Button(String(localized: "Delete \(selected.count)"), role: .destructive) {
                 Task { await performDelete() }
             }
             Button("Cancel", role: .cancel) {}
@@ -168,7 +168,7 @@ struct AssetCleanupScreen: View {
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Button(allSelected ? "Deselect All" : "Select All") {
+            Button(allSelected ? String(localized: "Deselect All") : String(localized: "Select All")) {
                 if allSelected {
                     selected.removeAll()
                 } else {
@@ -234,7 +234,7 @@ struct AssetCleanupScreen: View {
                 assets.removeAll { removed.contains($0.id) }
                 selected.removeAll()
                 onIgnore(ids)
-                Task { await flashBanner("Won't suggest \(ids.count) \(noun(ids.count)) again") }
+                Task { await flashBanner(String(localized: "Won't suggest \(counted(ids.count)) again")) }
             } label: {
                 HStack(spacing: Theme.Spacing.s) {
                     Image(systemName: "hand.raised.fill")
@@ -270,10 +270,10 @@ struct AssetCleanupScreen: View {
     }
 
     private var deleteButtonTitle: String {
-        if isDeleting { return "Deleting…" }
-        var title = "Delete \(selected.count) \(noun(selected.count))"
+        if isDeleting { return String(localized: "Deleting…") }
+        var title = String(localized: "Delete \(counted(selected.count))")
         let bytes = selectedBytes
-        if bytes > 0 { title += " · frees ~\(bytes.formatted(.byteCount(style: .file)))" }
+        if bytes > 0 { title += String(localized: " · frees ~\(bytes.formatted(.byteCount(style: .file)))") }
         return title
     }
 
@@ -339,8 +339,13 @@ struct AssetCleanupScreen: View {
 
     // MARK: Copy helpers
 
-    private func noun(_ count: Int) -> String {
-        count == 1 ? category.noun : category.noun + "s"
+    /// "3 screenshots", pluralized by the target language's own rules.
+    ///
+    /// This replaces `category.noun + "s"`, which silently encoded the
+    /// assumption that the interface is English — and was already wrong for
+    /// "copy"/"copies" before any second language existed.
+    private func counted(_ count: Int) -> String {
+        category.noun.counted(count)
     }
 
     // MARK: Actions
@@ -354,16 +359,16 @@ struct AssetCleanupScreen: View {
     private func exportSelectionToAlbum() async {
         guard let library, !selected.isEmpty else { return }
         let ids = Array(selected)
-        let title = "TidyGallery – \(category.title)"
+        let title = String(localized: "TidyGallery – \(category.title)")
 
         isExporting = true
         defer { isExporting = false }
 
         do {
             try await library.createAlbum(named: title, withAssetIDs: ids)
-            await flashBanner("Added \(ids.count) to “\(title)”")
+            await flashBanner(String(localized: "Added \(ids.count) to “\(title)”"))
         } catch {
-            await flashBanner("Couldn't create album: \(error.localizedDescription)")
+            await flashBanner(String(localized: "Couldn't create album: \(error.localizedDescription)"))
         }
     }
 
@@ -387,9 +392,9 @@ struct AssetCleanupScreen: View {
             assets.removeAll { removed.contains($0.id) }
             selected.removeAll()
             onDeleted(ids)   // reconcile home counts + other categories at once
-            await flashBanner("Deleted \(ids.count) \(noun(ids.count))")
+            await flashBanner(String(localized: "Deleted \(counted(ids.count))"))
         } catch {
-            await flashBanner("Couldn't delete: \(error.localizedDescription)")
+            await flashBanner(String(localized: "Couldn't delete: \(error.localizedDescription)"))
         }
     }
 

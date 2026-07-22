@@ -146,7 +146,7 @@ struct PhotoPreviewView: View {
 
     private func position(in stack: ReviewModel.Stack) -> String? {
         guard let idx = stack.rankedIDs.firstIndex(of: currentID) else { return nil }
-        return "\(idx + 1) of \(stack.rankedIDs.count)"
+        return String(localized: "\(idx + 1) of \(stack.rankedIDs.count)")
     }
 }
 

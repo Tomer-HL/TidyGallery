@@ -16,8 +16,8 @@ struct AssetTileView: View {
     let isVideo: Bool
     /// Optional caption drawn along the bottom, e.g. "24.1 MB" or "1:32 · 88 MB".
     let subtitle: String?
-    /// Singular noun for the accessibility label, e.g. "video".
-    let noun: String
+    /// What this tile holds, for the accessibility label.
+    let noun: ItemNoun
     let onToggle: () -> Void
 
     @Environment(\.photoLibrary) private var library
@@ -44,7 +44,15 @@ struct AssetTileView: View {
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
             .onTapGesture { onToggle() }
             .task(id: assetID) { await load() }
-            .accessibilityLabel(isSelected ? "\(noun.capitalized), selected" : noun.capitalized)
+            // `.capitalized` is gone on purpose: it's a Latin-script habit that
+            // does nothing in Hebrew (which has no letter case) and mangles
+            // some languages outright. The localization supplies the noun in the
+            // form it should be read aloud in.
+            .accessibilityLabel(
+                isSelected
+                    ? String(localized: "\(noun.singularName), selected")
+                    : noun.singularName
+            )
             .accessibilityValue(subtitle ?? "")
             .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }

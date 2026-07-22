@@ -57,11 +57,11 @@ struct ReviewScreen: View {
         .navigationBarTitleDisplayMode(.large)
         .safeAreaInset(edge: .bottom) { deleteBar }
         .confirmationDialog(
-            "Delete \(model.totalPhotosToDelete) photo\(model.totalPhotosToDelete == 1 ? "" : "s")?",
+            String(localized: "Delete \(ItemNoun.photo.counted(model.totalPhotosToDelete))?"),
             isPresented: $showConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete \(model.totalPhotosToDelete)", role: .destructive) {
+            Button(String(localized: "Delete \(model.totalPhotosToDelete)"), role: .destructive) {
                 Task { await performDelete() }
             }
             Button("Cancel", role: .cancel) {}
@@ -158,11 +158,11 @@ struct ReviewScreen: View {
     // MARK: Delete button label
 
     private var deleteButtonTitle: String {
-        if isDeleting { return "Deleting…" }
+        if isDeleting { return String(localized: "Deleting…") }
         let n = model.totalPhotosToDelete
-        var title = "Delete \(n) photo\(n == 1 ? "" : "s")"
+        var title = String(localized: "Delete \(ItemNoun.photo.counted(n))")
         if model.totalBytesToFree > 0 {
-            title += " · frees ~\(model.totalBytesToFree.formatted(.byteCount(style: .file)))"
+            title += String(localized: " · frees ~\(model.totalBytesToFree.formatted(.byteCount(style: .file)))")
         }
         return title
     }
@@ -202,7 +202,7 @@ struct ReviewScreen: View {
             guard confirmed else { return }   // user cancelled the system sheet
             model.removeDeleted(ids)
             onDeleted(ids)   // reconcile home counts + other categories at once
-            await flashBanner("Deleted \(ids.count) photo\(ids.count == 1 ? "" : "s")")
+            await flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(ids.count))"))
         } catch {
             await flashBanner("Couldn't delete: \(error.localizedDescription)")
         }

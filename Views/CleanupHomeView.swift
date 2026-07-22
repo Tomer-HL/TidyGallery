@@ -173,7 +173,7 @@ struct CleanupHomeView: View {
         if skipped > 0, coordinator.analysisProgress == nil {
             VStack(alignment: .leading, spacing: Theme.Spacing.s) {
                 Label {
-                    Text("\(skipped) photo\(skipped == 1 ? "" : "s") stored in iCloud")
+                    Text(String(localized: "\(ItemNoun.photo.counted(skipped)) stored in iCloud"))
                         .font(.subheadline.weight(.semibold))
                 } icon: {
                     Image(systemName: "icloud.and.arrow.down")
@@ -299,12 +299,16 @@ struct CleanupHomeView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Recommended cleanup")
                             .font(.headline)
-                        Text("\(recommended.count) safe duplicate\(recommended.count == 1 ? "" : "s") to review")
+                        Text(String(localized: "\(ItemNoun.safeDuplicate.counted(recommended.count)) to review"))
                             .font(.caption)
                             .opacity(0.9)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                    // `.forward`, not `.right`: the semantic variant mirrors in
+                    // right-to-left layouts, so in Hebrew this points left — the
+                    // direction "onward" actually is. `chevron.right` would keep
+                    // pointing back the way the user came.
+                    Image(systemName: "chevron.forward").font(.caption.weight(.bold))
                 }
                 .foregroundStyle(.white)
                 .padding(Theme.Spacing.m)
@@ -334,8 +338,16 @@ struct CleanupHomeView: View {
 
     // MARK: Section header
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
+    /// `LocalizedStringKey`, not `String`: a `String` handed to `Text` is
+    /// passed through verbatim, so this helper was quietly the one place on the
+    /// home screen that could never be translated.
+    ///
+    /// `.textCase(.uppercase)` replaces `title.uppercased()` for the same
+    /// reason it's applied as a style rather than baked into the text — it is a
+    /// visual treatment for a cased script, and a no-op in Hebrew.
+    private func sectionHeader(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .textCase(.uppercase)
             .font(.caption.weight(.semibold))
             .tracking(0.5)
             .foregroundStyle(Theme.Colors.textSecondary)
@@ -355,7 +367,7 @@ struct CleanupHomeView: View {
             title: CleanupCategory.exactDuplicates.title,
             blurb: CleanupCategory.exactDuplicates.blurb,
             count: extras.count,
-            countLabel: "\(extras.count) cop\(extras.count == 1 ? "y" : "ies")"
+            countLabel: ItemNoun.copy.counted(extras.count)
         ) {
             AssetCleanupScreen(
                 category: .exactDuplicates,
@@ -369,10 +381,10 @@ struct CleanupHomeView: View {
     private var duplicatesCard: some View {
         categoryCard(
             icon: "square.stack.3d.up.fill",
-            title: "Duplicates",
-            blurb: "Bursts and near-duplicates, with the best shot picked for you",
+            title: String(localized: "Duplicates"),
+            blurb: String(localized: "Bursts and near-duplicates, with the best shot picked for you"),
             count: coordinator.stacks.count,
-            countLabel: "\(coordinator.stacks.count) group\(coordinator.stacks.count == 1 ? "" : "s")"
+            countLabel: ItemNoun.group.counted(coordinator.stacks.count)
         ) {
             ReviewScreen(
                 stacks: coordinator.stacks,
@@ -388,7 +400,7 @@ struct CleanupHomeView: View {
             title: category.title,
             blurb: category.blurb,
             count: assets.count,
-            countLabel: "\(assets.count) \(category.noun)\(assets.count == 1 ? "" : "s")"
+            countLabel: category.noun.counted(assets.count)
         ) {
             AssetCleanupScreen(
                 category: category,
@@ -404,10 +416,10 @@ struct CleanupHomeView: View {
         let ignored = coordinator.ignoredAssets
         return categoryCard(
             icon: "hand.raised",
-            title: "Ignored",
-            blurb: "Photos you chose to keep — never suggested again",
+            title: String(localized: "Ignored"),
+            blurb: String(localized: "Photos you chose to keep — never suggested again"),
             count: ignored.count,
-            countLabel: "\(ignored.count) photo\(ignored.count == 1 ? "" : "s")"
+            countLabel: ItemNoun.photo.counted(ignored.count)
         ) {
             IgnoredAssetsScreen(
                 assets: ignored,
@@ -465,7 +477,8 @@ struct CleanupHomeView: View {
                     .monospacedDigit()
                     .foregroundStyle(enabled ? Theme.Colors.textPrimary : Theme.Colors.textSecondary)
                 if enabled {
-                    Image(systemName: "chevron.right")
+                    // Semantic direction, so it mirrors in Hebrew. See above.
+                    Image(systemName: "chevron.forward")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(Theme.Colors.textSecondary)
                 }
