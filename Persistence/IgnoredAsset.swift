@@ -9,6 +9,13 @@
 //  gains a new output (schemaVersion bumps) — user decisions must NEVER be lost
 //  that way, so they live in their own table with no version coupling.
 //
+//  A separate *entity* turned out not to be enough. Entities in one SwiftData
+//  store share a single file, and the cache container's recovery path deletes
+//  that file outright to survive a migration failure — taking every ignore
+//  decision with it. These rows now live in their own store (`IgnoreList.store`,
+//  built in `TidyGalleryApp.makeIgnoreContainer()`), which is what actually
+//  makes the guarantee above true rather than merely intended.
+//
 
 import Foundation
 import SwiftData

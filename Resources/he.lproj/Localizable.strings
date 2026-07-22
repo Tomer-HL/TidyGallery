@@ -32,6 +32,7 @@
 "Content detection sets how confident the classifier must be before tagging Food, Pets, Documents and so on — lower catches more. These are computed while analysing, so changing them re-analyses your photos." = "זיהוי תוכן קובע כמה המסווג צריך להיות בטוח לפני שהוא מתייג אוכל, חיות מחמד, מסמכים וכדומה — ערך נמוך תופס יותר. אלה מחושבים בזמן הניתוח, ולכן שינוי שלהם מנתח מחדש את התמונות.";
 "Couldn't create album: %@" = "לא הצלחנו ליצור אלבום: %@";
 "Couldn't delete: %@" = "לא הצלחנו למחוק: %@";
+"Couldn't save your choice" = "לא הצלחנו לשמור את הבחירה שלך";
 "Delete %@" = "מחק %@";
 "Delete %@?" = "למחוק %@?";
 "Delete %lld" = "מחק %lld";
@@ -75,6 +76,7 @@
 "Minimum size for a photo to count as a big file." = "הגודל המזערי שממנו תמונה נחשבת קובץ גדול.";
 "Most of what people actually revisit" = "רוב מה שבאמת חוזרים אליו";
 "Nature & scenery" = "טבע ונופים";
+"Never suggest" = "אל תציע שוב";
 "Newest first" = "החדשות קודם";
 "No documents" = "אין מסמכים";
 "No exact duplicates" = "אין כפילויות מדויקות";
@@ -132,6 +134,7 @@
 "Standalone shots that look soft — review before deleting" = "תמונות בודדות שנראות רכות — כדאי לבדוק לפני מחיקה";
 "Still looking for duplicates…" = "עדיין מחפשים כפילויות…";
 "Stop ignoring %lld" = "הפסק להתעלם מ‑%lld";
+"The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart." = "התמונות ששמרת מוסתרות בינתיים, אבל ההחלטה לא נכתבה לאחסון ולא תישרד הפעלה מחדש.";
 "The safe near-duplicates we suggest removing" = "הכפילויות הבטוחות שאנחנו מציעים למחוק";
 "Their eyes look closed" = "נראה שהעיניים עצומות";
 "There are no confident duplicate suggestions right now." = "אין כרגע הצעות כפילות ודאיות.";

@@ -16,7 +16,12 @@ struct StackCardView: View {
     let onToggleDeletion: (PhotoAsset.ID) -> Void
     let onMakeBest: (PhotoAsset.ID) -> Void
     let onSelectAllExtras: () -> Void
+    /// Untick this group's photos. A view-local reset — deliberately NOT a
+    /// durable decision; see `onNeverSuggest`.
     let onKeepAll: () -> Void
+    /// Record this whole group as "never suggest again", persisted. Optional so
+    /// the card still works where no ignore list is available.
+    var onNeverSuggest: (() -> Void)?
     /// Ask to explain why a photo scored as it did. Optional so the card works
     /// without it; nothing is computed unless the user actually asks.
     var onExplain: ((PhotoAsset.ID) -> Void)?
@@ -103,6 +108,13 @@ struct StackCardView: View {
 
     // MARK: Footer quick actions
 
+    /// Three actions, and the distinction between the last two is the point.
+    ///
+    /// "Keep all" only unticks the boxes: it says "not this time". "Never
+    /// suggest" writes the group to the ignore list: it says "not ever". Those
+    /// are different intentions and used to share one button — which is why
+    /// keeping photos here appeared to do nothing, and why they never turned up
+    /// under Ignored. Two intentions, two buttons, two different words.
     private var footerActions: some View {
         HStack(spacing: Theme.Spacing.m) {
             Button(action: onSelectAllExtras) {
@@ -114,6 +126,13 @@ struct StackCardView: View {
                 Label("Keep all", systemImage: "arrow.uturn.backward")
             }
             .buttonStyle(QuietButtonStyle(tint: Theme.Colors.textSecondary))
+
+            if let onNeverSuggest {
+                Button(action: onNeverSuggest) {
+                    Label("Never suggest", systemImage: "hand.raised")
+                }
+                .buttonStyle(QuietButtonStyle(tint: Theme.Colors.textSecondary))
+            }
 
             Spacer()
         }

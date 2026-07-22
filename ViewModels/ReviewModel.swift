@@ -117,10 +117,19 @@ final class ReviewModel {
         stacks[i].checkedForDeletion = Set(extras)
     }
 
-    /// Clear all deletion checks in a stack (keep everything).
+    /// Clear all deletion checks in a stack (keep everything **this time**).
+    ///
+    /// View-local and deliberately not persisted — "not now" rather than "not
+    /// ever". `ReviewScreen.neverSuggest(_:)` is the durable counterpart.
     func clearChecks(inStack stackID: UUID) {
         guard let i = stacks.firstIndex(where: { $0.id == stackID }) else { return }
         stacks[i].checkedForDeletion.removeAll()
+    }
+
+    /// Remove a whole stack from the review list, after the user has said it
+    /// should never be suggested again.
+    func removeStack(_ stackID: UUID) {
+        stacks.removeAll { $0.id == stackID }
     }
 
     // MARK: - Post-deletion

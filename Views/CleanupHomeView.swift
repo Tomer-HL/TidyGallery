@@ -31,6 +31,7 @@ struct CleanupHomeView: View {
             ScrollView {
                 LazyVStack(spacing: Theme.Spacing.m) {
                     analysisBanner
+                    ignoreFailureBanner
                     iCloudBanner
 
                     if showAllClear {
@@ -156,6 +157,35 @@ struct CleanupHomeView: View {
                 Text("Everything below is ready to use now.")
                     .font(.caption)
                     .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .padding(Theme.Spacing.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.Colors.surfaceMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+    }
+
+    // MARK: Ignore-list failure banner
+
+    /// Shown when a "don't suggest again" decision couldn't be written to disk.
+    ///
+    /// Worth a banner rather than a log line: the photos will have disappeared
+    /// from their category, so the app *looks* like it did what was asked. The
+    /// user would only find out at the next launch, when everything they kept
+    /// came back — with no way to know why, or that it had happened at all.
+    @ViewBuilder
+    private var ignoreFailureBanner: some View {
+        if coordinator.ignoreListWriteFailed {
+            Label {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Text("Couldn't save your choice")
+                        .font(.subheadline.weight(.semibold))
+                    Text("The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.Colors.destructive)
             }
             .padding(Theme.Spacing.l)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -388,7 +418,8 @@ struct CleanupHomeView: View {
         ) {
             ReviewScreen(
                 stacks: coordinator.stacks,
-                onDeleted: { coordinator.noteDeleted(ids: $0) }
+                onDeleted: { coordinator.noteDeleted(ids: $0) },
+                onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } }
             )
         }
     }

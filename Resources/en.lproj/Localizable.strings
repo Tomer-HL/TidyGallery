@@ -32,6 +32,7 @@
 "Content detection sets how confident the classifier must be before tagging Food, Pets, Documents and so on — lower catches more. These are computed while analysing, so changing them re-analyses your photos." = "Content detection sets how confident the classifier must be before tagging Food, Pets, Documents and so on — lower catches more. These are computed while analysing, so changing them re-analyses your photos.";
 "Couldn't create album: %@" = "Couldn't create album: %@";
 "Couldn't delete: %@" = "Couldn't delete: %@";
+"Couldn't save your choice" = "Couldn't save your choice";
 "Delete %@" = "Delete %@";
 "Delete %@?" = "Delete %@?";
 "Delete %lld" = "Delete %lld";
@@ -75,6 +76,7 @@
 "Minimum size for a photo to count as a big file." = "Minimum size for a photo to count as a big file.";
 "Most of what people actually revisit" = "Most of what people actually revisit";
 "Nature & scenery" = "Nature & scenery";
+"Never suggest" = "Never suggest";
 "Newest first" = "Newest first";
 "No documents" = "No documents";
 "No exact duplicates" = "No exact duplicates";
@@ -132,6 +134,7 @@
 "Standalone shots that look soft — review before deleting" = "Standalone shots that look soft — review before deleting";
 "Still looking for duplicates…" = "Still looking for duplicates…";
 "Stop ignoring %lld" = "Stop ignoring %lld";
+"The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart." = "The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart.";
 "The safe near-duplicates we suggest removing" = "The safe near-duplicates we suggest removing";
 "Their eyes look closed" = "Their eyes look closed";
 "There are no confident duplicate suggestions right now." = "There are no confident duplicate suggestions right now.";

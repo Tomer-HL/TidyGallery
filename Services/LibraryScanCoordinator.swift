@@ -498,7 +498,9 @@ final class LibraryScanCoordinator {
         selfiePhotos = suggestable(rawSelfies)
         stripIgnoredFromStackPreselections()
         recommendedAssets = recommendedDeletions()
-        ignoredAssets = library.snapshots(for: Array(ignoredIDs))
+        // `imagesOnly: false` — a kept video must be shown back to the user, or
+        // the decision can never be undone.
+        ignoredAssets = library.snapshots(for: Array(ignoredIDs), imagesOnly: false)
         refreshStorageSummary()
     }
 
@@ -747,9 +749,23 @@ final class LibraryScanCoordinator {
 
     /// Mark assets as "never suggest again". Persisted, then every published
     /// list is refreshed so they disappear from suggestions immediately.
+    /// Whether the last attempt to record a decision failed to persist. The UI
+    /// surfaces this rather than letting the user believe a choice was saved.
+    private(set) var ignoreListWriteFailed = false
+
     func ignore(ids: [PhotoAsset.ID]) async {
         guard !ids.isEmpty else { return }
-        try? await ignoreList.ignore(ids: ids)
+        do {
+            try await ignoreList.ignore(ids: ids)
+            ignoreListWriteFailed = false
+        } catch {
+            // Previously `try?`. A failed write left the ids in the in-memory
+            // set, so the photos vanished from suggestions and looked kept —
+            // until the next launch reloaded from disk and silently brought
+            // them all back. Losing a decision is bad; hiding that we lost it
+            // is worse, because the user has no reason to make it again.
+            ignoreListWriteFailed = true
+        }
         ignoredIDs.formUnion(ids)
         // Cheap: re-filter what we already have, no library enumeration.
         refreshDerivedCategories()

@@ -171,14 +171,23 @@ final class PhotoLibraryService {
         }
     }
 
-    /// Snapshots specific assets by identifier (still images only) — used to
-    /// re-analyse just the delta when the library changes.
-    func snapshots(for identifiers: [String]) -> [PhotoAsset] {
+    /// Snapshots specific assets by identifier.
+    ///
+    /// - Parameter imagesOnly: when `true`, videos are dropped. Correct for the
+    ///   analysis delta (Vision only runs on stills) and **wrong** for anything
+    ///   that has to show the user their own assets back.
+    ///
+    ///   That distinction was a real bug: the ignore list was rendered through
+    ///   this method with the filter always on, so ignoring a video removed it
+    ///   from every suggestion but never showed it on the Ignored screen. The
+    ///   decision was invisible *and* impossible to undo — the worst combination
+    ///   for a feature whose entire job is letting people take a choice back.
+    func snapshots(for identifiers: [String], imagesOnly: Bool = true) -> [PhotoAsset] {
         guard !identifiers.isEmpty else { return [] }
         let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
         var result: [PhotoAsset] = []
         fetched.enumerateObjects { asset, _, _ in
-            if asset.mediaType == .image {
+            if !imagesOnly || asset.mediaType == .image {
                 result.append(Self.snapshot(asset))
             }
         }

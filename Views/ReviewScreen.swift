@@ -15,6 +15,14 @@ struct ReviewScreen: View {
     /// Called after a successful deletion so the coordinator can reconcile the
     /// home counts and other category screens immediately.
     var onDeleted: ([PhotoAsset.ID]) -> Void
+    /// Record photos as "never suggest again". `nil` hides the action.
+    ///
+    /// This screen previously had no way to reach the ignore list at all: the
+    /// only "keep" affordance was `clearChecks`, which unticks boxes in memory.
+    /// So a user who carefully kept photos here saw nothing recorded, nothing on
+    /// the Ignored screen, and the same photos pre-selected again after the next
+    /// scan — the app quietly forgetting every decision they made.
+    var onIgnore: (([PhotoAsset.ID]) -> Void)?
 
     @State private var showConfirm = false
     @State private var isDeleting = false
@@ -38,9 +46,14 @@ struct ReviewScreen: View {
         let startAssetID: PhotoAsset.ID
     }
 
-    init(stacks: [PhotoStack], onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in }) {
+    init(
+        stacks: [PhotoStack],
+        onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in },
+        onIgnore: (([PhotoAsset.ID]) -> Void)? = nil
+    ) {
         _model = State(initialValue: ReviewModel(stacks: stacks))
         self.onDeleted = onDeleted
+        self.onIgnore = onIgnore
     }
 
     var body: some View {
@@ -91,6 +104,7 @@ struct ReviewScreen: View {
                         onMakeBest: { model.setBestShot($0, inStack: stack.id) },
                         onSelectAllExtras: { model.checkAllExtras(inStack: stack.id) },
                         onKeepAll: { model.clearChecks(inStack: stack.id) },
+                        onNeverSuggest: onIgnore == nil ? nil : { neverSuggest(stack) },
                         onExplain: { explaining = ExplainContext(stackID: stack.id, assetID: $0) }
                     )
                 }
@@ -183,6 +197,28 @@ struct ReviewScreen: View {
                 isBestShot: isBest,
                 labels: asset.classificationLabels,
                 config: .default
+            )
+        }
+    }
+
+    // MARK: Never-suggest action
+
+    /// Record every photo in a group as "never suggest again", then drop the
+    /// group from this screen.
+    ///
+    /// The banner is not decoration. The original failure here was invisible —
+    /// the user kept photos, nothing was written, and there was no way to tell
+    /// from the screen. A durable decision has to say so out loud.
+    private func neverSuggest(_ stack: ReviewModel.Stack) {
+        guard let onIgnore else { return }
+        let ids = stack.assets.map(\.id)
+        guard !ids.isEmpty else { return }
+
+        onIgnore(ids)
+        model.removeStack(stack.id)
+        Task {
+            await flashBanner(
+                String(localized: "Won't suggest \(ItemNoun.photo.counted(ids.count)) again")
             )
         }
     }
