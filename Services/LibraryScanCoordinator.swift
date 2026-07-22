@@ -217,9 +217,12 @@ final class LibraryScanCoordinator {
 
     private let progressReportInterval = 10
 
-    /// Bounds how many images are decoded + analysed at once. Tuned low to keep
-    /// peak memory and thermals in check on large libraries; raise cautiously.
-    private let maxConcurrentAnalyses: Int
+    /// Bounds how many images are decoded + analysed at once.
+    ///
+    /// Reads from `config` rather than being fixed at init, so it moves with the
+    /// rest of the analysis tuning. Measurement showed the old value of 4 was
+    /// never actually reached — the ceiling was the main actor, not this number.
+    private var maxConcurrentAnalyses: Int { config.maxConcurrentAnalyses }
 
     /// The enriched, analysed asset set from the last scan — retained so live
     /// library changes can be applied as deltas without re-scanning everything.
@@ -239,8 +242,7 @@ final class LibraryScanCoordinator {
         analyzer: ImageAnalyzer,
         cache: AnalysisCacheStore,
         ignoreList: IgnoreListStore,
-        tuning: TuningSettings = TuningStore.load(),
-        maxConcurrentAnalyses: Int = 4
+        tuning: TuningSettings = TuningStore.load()
     ) {
         self.library = library
         self.analyzer = analyzer
@@ -248,7 +250,6 @@ final class LibraryScanCoordinator {
         self.ignoreList = ignoreList
         self.tuning = tuning
         self.config = tuning.applied()
-        self.maxConcurrentAnalyses = maxConcurrentAnalyses
     }
 
     // MARK: - Public entry point
@@ -286,7 +287,6 @@ final class LibraryScanCoordinator {
 
         // Access is settled — move off "Requesting photo access…" immediately.
         phase = .scanning(analysed: 0, total: 0)
-        library.scope = scope
 
         // Load the user's "never suggest this again" decisions up front so every
         // category built below can exclude them.
@@ -299,7 +299,7 @@ final class LibraryScanCoordinator {
         analysedAssets = []
         stacks = []
         let metadataStart = ContinuousClock.now
-        refreshCategories()
+        await refreshCategories()
         recordPhase(ScanMetrics.Phase.metadataPass, since: metadataStart)
         phase = .finished(stackCount: 0)
 
@@ -328,7 +328,7 @@ final class LibraryScanCoordinator {
 
         var enriched: [PhotoAsset] = []
         do {
-            for await page in library.assetPages() {
+            for await page in library.assetPages(scope: scope) {
                 scanTotal = page.totalCount
                 metrics.scopedAssetCount = page.totalCount
                 let (pageAssets, _) = try await process(page: page)
@@ -415,6 +415,7 @@ final class LibraryScanCoordinator {
                 } else {
                     let imageResult = await library.analysisImage(
                         for: asset.id,
+                        targetSize: config.analysisImageSize,
                         allowNetwork: tuning.analyseICloudPhotos
                     )
                     if case let .image(cgImage) = imageResult,
@@ -458,16 +459,35 @@ final class LibraryScanCoordinator {
     /// after a full scan and after each library delta.
     /// Full refresh: re-enumerate the library, then re-derive everything.
     /// Used after a scan, a library change, or a settings change.
-    private func refreshCategories() {
-        // One pass yields both videos and the screen-recording subset; fetching
-        // them separately walked every video twice, with a PHAssetResource
-        // lookup each time.
-        let (videos, recordings) = library.fetchVideosAndScreenRecordings()
-        rawScreenshots = library.fetchScreenshots()
-        rawSelfies = library.fetchSelfies()
+    private func refreshCategories() async {
+        // Every fetch below now runs off the main actor. Measured at 4.5 ms per
+        // asset, this pass was ~1 s for 228 photos and would have been about 90
+        // seconds of frozen UI on a 20,000-photo library — while being the very
+        // pass whose selling point is that it appears immediately.
+        //
+        // They're run concurrently because they're independent queries against
+        // the same library; previously they were serialised by the main actor
+        // whether they needed to be or not.
+        let scope = self.scope
+        let stillLimit = config.bigFileCandidateStillLimit
+
+        async let videosAndRecordings = library.fetchVideosAndScreenRecordings(scope: scope)
+        async let screenshotsFetch = library.fetchScreenshots(scope: scope)
+        async let selfiesFetch = library.fetchSelfies(scope: scope)
+        async let bigFilesFetch = Self.computeBigFiles(
+            library: library,
+            scope: scope,
+            stillLimit: stillLimit,
+            minBytes: config.bigFileMinBytes,
+            displayLimit: config.bigFileDisplayLimit
+        )
+
+        let (videos, recordings) = await videosAndRecordings
+        rawScreenshots = await screenshotsFetch
+        rawSelfies = await selfiesFetch
         rawVideos = videos
         rawRecordings = recordings
-        rawBigFiles = computeBigFiles()
+        rawBigFiles = await bigFilesFetch
         refreshDerivedCategories()
     }
 
@@ -548,11 +568,15 @@ final class LibraryScanCoordinator {
     private func measureTotalLibrarySize() {
         let assets = analysedAssets
         let finder = ExactDuplicateFinder(config: config)
+        // Captured explicitly: inside a `[weak self]` closure a bare `scope`
+        // won't compile, and reading it through `self?` would race the scope
+        // changing under a rescan.
+        let scope = self.scope
 
         totalSizeTask?.cancel()
         totalSizeTask = Task { [weak self, library] in
             let start = ContinuousClock.now
-            let sizes = await library.libraryFileSizes()
+            let sizes = await library.libraryFileSizes(scope: scope)
             guard !Task.isCancelled else { return }
             let measurementSeconds = (ContinuousClock.now - start).inSeconds
 
@@ -618,7 +642,7 @@ final class LibraryScanCoordinator {
 
         summaryTask?.cancel()
         summaryTask = Task { [weak self, library] in
-            let sizes = await library.assetFileSizes(for: Array(input.unionIDs))
+            let sizes = await library.fileSizes(for: Array(input.unionIDs))
             guard !Task.isCancelled else { return }
             self?.storageSummary = StorageSummaryBuilder.build(input, sizes: sizes)
         }
@@ -639,14 +663,23 @@ final class LibraryScanCoordinator {
     /// pool, keeps only those at or above the size floor, sorts largest-first and
     /// caps the count. Measuring here (not in the view) keeps the home card's
     /// count consistent with what the screen shows.
-    private func computeBigFiles() -> [PhotoAsset] {
-        let candidates = library.fetchLargeFileCandidates(stillLimit: config.bigFileCandidateStillLimit)
+    /// `nonisolated static` so it can run off the main actor: it enumerates
+    /// every still in scope and then measures real on-disk sizes for the bounded
+    /// candidate pool, which was the most expensive part of the metadata pass.
+    private nonisolated static func computeBigFiles(
+        library: PhotoLibraryService,
+        scope: ScanScope,
+        stillLimit: Int,
+        minBytes: Int64,
+        displayLimit: Int
+    ) async -> [PhotoAsset] {
+        let candidates = await library.fetchLargeFileCandidates(scope: scope, stillLimit: stillLimit)
         guard !candidates.isEmpty else { return [] }
-        let sizes = library.fileSizes(for: candidates.map(\.id))
+        let sizes = await library.fileSizes(for: candidates.map(\.id))
         return candidates
-            .filter { (sizes[$0.id] ?? 0) >= config.bigFileMinBytes }
+            .filter { (sizes[$0.id] ?? 0) >= minBytes }
             .sorted { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
-            .prefix(config.bigFileDisplayLimit)
+            .prefix(displayLimit)
             .map { $0 }
     }
 
@@ -674,7 +707,7 @@ final class LibraryScanCoordinator {
             try? await Task.sleep(for: .milliseconds(400))
             guard let self, !Task.isCancelled else { return }
             self.stacks = self.buildStacks(from: self.analysedAssets)
-            self.refreshCategories()
+            await self.refreshCategories()
             self.phase = .finished(stackCount: self.stacks.count)
         }
     }
@@ -740,7 +773,7 @@ final class LibraryScanCoordinator {
             await scan()
         } else {
             stacks = buildStacks(from: analysedAssets)
-            refreshCategories()
+            await refreshCategories()
             phase = .finished(stackCount: stacks.count)
         }
     }
@@ -824,6 +857,7 @@ final class LibraryScanCoordinator {
         // mutable `@MainActor` property (like `tuning`) from inside it is an
         // isolation error — capture the plain value instead.
         let allowNetwork = tuning.analyseICloudPhotos
+        let imageSize = config.analysisImageSize
 
         // 2. Analyse misses with bounded concurrency.
         return try await withThrowingTaskGroup(of: PageResult.self) { group in
@@ -834,7 +868,7 @@ final class LibraryScanCoordinator {
                 let asset = enriched[index]
                 group.addTask { [library, analyzer] in
                     let loadStart = ContinuousClock.now
-                    let image = await library.analysisImage(for: asset.id, allowNetwork: allowNetwork)
+                    let image = await library.analysisImage(for: asset.id, targetSize: imageSize, allowNetwork: allowNetwork)
                     let loadSeconds = (ContinuousClock.now - loadStart).inSeconds
 
                     switch image {

@@ -116,6 +116,36 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// Hard cap on how many photos "Possibly blurry" ever surfaces.
     var blurryMaxCount: Int = 200
 
+    // MARK: Analysis cost
+
+    /// The square bound, in pixels, that photos are downscaled to before
+    /// analysis. The single biggest lever on scan time.
+    ///
+    /// Measured on an iPhone 11 Pro Max at 512: 154 ms to load and decode each
+    /// image, plus 115 ms of Vision — 269 ms per photo, which projects to about
+    /// 45 minutes for 20,000 photos. Decode and Vision both scale with pixel
+    /// count, and 384 is 44% fewer pixels than 512.
+    ///
+    /// **Two things are coupled to this value and break silently if it changes.**
+    /// Laplacian sharpness is scale-dependent, so `blurrySinglesSharpnessCeiling`
+    /// is calibrated *for a particular size* — halve the image and everything
+    /// reads blurrier. And face landmarks need faces to be a reasonable number
+    /// of pixels across, so going much below this starts losing the small,
+    /// distant faces in group shots, which is exactly where eyes-closed
+    /// detection earns its keep. That's why this stops at 384 rather than
+    /// chasing the cost down further.
+    var analysisImageSize: Int = 384
+
+    /// How many photos are decoded and analysed at once.
+    ///
+    /// Was 4, which measured as only 2–3× effective parallelism — because every
+    /// worker queued on the main actor for its image request. With
+    /// `PhotoLibraryService` off the main actor the pool can actually be filled,
+    /// so this is raised. It is a throughput/thermal trade rather than a memory
+    /// one: peak footprint measured 59.8 MB against 1.99 GB of headroom, so
+    /// memory is nowhere near the limiting factor.
+    var maxConcurrentAnalyses: Int = 6
+
     /// How many of the highest-resolution stills to measure as "big file"
     /// candidates. Reading real on-disk size for a whole 20k library is
     /// expensive, so we bound the candidate pool to the largest-by-resolution

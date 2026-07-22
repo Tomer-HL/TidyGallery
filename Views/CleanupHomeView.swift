@@ -278,7 +278,11 @@ struct CleanupHomeView: View {
 
             Group {
                 if let total = coordinator.totalLibraryBytes {
-                    Text("of \(total.formatted(.byteCount(style: .file))) in your library")
+                    // "scanned", not "in your library": the measurement now
+                    // honours the scan scope, so on "Past month" this is the
+                    // size of that month, not of everything you own. Claiming
+                    // otherwise would be a wrong number, not just vague copy.
+                    Text("of \(total.formatted(.byteCount(style: .file))) scanned")
                 } else {
                     Text("Measuring library size…")
                 }

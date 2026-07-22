@@ -4,9 +4,45 @@
 //
 //  Owns every interaction with the Photos framework: authorization, memory-safe
 //  batch enumeration of a 20,000+ photo library, on-demand thumbnail loading,
-//  and (Phase 2) deletion. Isolated to the main actor because `PHPhotoLibrary`
-//  and change notifications are delivered there; heavy pixel work is handed off
-//  to the `ImageAnalyzer` actor.
+//  and deletion.
+//
+//  Concurrency: why this is NOT on the main actor
+//  ---------------------------------------------
+//  It used to be, on the reasoning that `PHPhotoLibrary` and its change
+//  notifications are delivered there. Measurement on a real device showed what
+//  that actually cost:
+//
+//    * The "instant" metadata pass took 607 ms for 110 photos and 1,022 ms for
+//      228 — about 4.5 ms per asset, all of it blocking the main thread. That
+//      extrapolates to roughly 90 seconds of frozen UI on a 20,000-photo
+//      library, before the home screen can draw anything. The whole point of
+//      that pass is that it appears immediately.
+//
+//    * Analysis achieved only 2–3× parallelism from a 4-wide pool, because every
+//      worker had to hop to the main actor for `analysisImage`, which also runs
+//      a `PHAsset.fetchAssets` per photo. The main actor was the bottleneck, not
+//      the CPU.
+//
+//  The Photos *read* APIs used here are thread-safe — this file already relied
+//  on that for `libraryFileSizes`, which has been `nonisolated` since it was
+//  written. So the whole service is now `Sendable` with no isolation, and the
+//  main actor is left free to draw.
+//
+//  Consequences, deliberately accepted:
+//    * `scope` is no longer mutable state on the service. It's passed to each
+//      fetch, which is why every method that filters by date takes it. Shared
+//      mutable state is what made this hard to move off the main actor.
+//    * `PHAsset` still never crosses into the analyzer: assets are snapshotted
+//      into `Sendable` value types at the boundary, exactly as before.
+//    * The heavy enumerations are `async` even though they do no awaiting.
+//      That is load-bearing, not decoration: a *nonisolated sync* function
+//      called from a `@MainActor` context still runs on the main actor, and so
+//      does the body of a `Task {}` or `async let` started there. Only a
+//      nonisolated ASYNC function is guaranteed to run on the cooperative pool
+//      (SE-0338). Dropping `async` from one of these would silently put it
+//      back on the main thread with no diagnostic.
+//    * `snapshots(for:)` is deliberately left synchronous: it is only ever
+//      called with the ignore list or a change delta, both small and bounded.
 //
 
 import Foundation
@@ -24,10 +60,6 @@ enum PhotoAccess: Sendable, Equatable {
 }
 
 /// Outcome of trying to load an image for analysis.
-///
-/// Declared at file scope, like `PhotoAccess` and `AssetPage`: nesting it inside
-/// the `@MainActor` service would make it main-actor isolated too, and it has to
-/// be matched inside the nonisolated analysis task group.
 enum AnalysisImage: Sendable {
     case image(CGImage)
     /// The asset lives only in iCloud and network access wasn't permitted.
@@ -37,7 +69,7 @@ enum AnalysisImage: Sendable {
     case unavailable
 }
 
-/// A page of snapshotted assets plus the source thumbnails' target size.
+/// A page of snapshotted assets.
 struct AssetPage: Sendable {
     let assets: [PhotoAsset]
     /// Zero-based index of this page within the overall enumeration.
@@ -48,34 +80,31 @@ struct AssetPage: Sendable {
     let totalCount: Int
 }
 
-@MainActor
-final class PhotoLibraryService {
+final class PhotoLibraryService: Sendable {
 
     /// How many assets we snapshot per page. Snapshots are tiny value types, so
     /// this bounds only the working set handed to the analyzer at a time.
     private let pageSize: Int
 
-    /// Target pixel size requested for analysis thumbnails. Vision's feature
-    /// print and face landmarks don't need full resolution; ~512px keeps memory
-    /// and decode cost low while preserving enough detail for blur/faces.
-    private let analysisTargetSize = CGSize(width: 512, height: 512)
-
-    private let imageManager = PHCachingImageManager()
-
-    /// How much of the library to consider. Every fetch below honours this, so
-    /// narrowing the window genuinely reduces the work rather than just
-    /// reordering it.
-    var scope: ScanScope = .allTime
+    /// `nonisolated(unsafe)` with justification: `PHImageManager` and its
+    /// caching subclass are documented as safe to use from any thread, and this
+    /// reference is immutable. The compiler can't know the first part, so the
+    /// annotation is the honest way to say "I checked".
+    private nonisolated(unsafe) let imageManager = PHCachingImageManager()
 
     init(pageSize: Int = 200) {
         self.pageSize = pageSize
     }
 
-    /// Fetch options with the scope's date window applied.
+    /// Fetch options with a scope's date window applied.
     ///
     /// - Parameter newestFirst: analysis walks newest-first so the photos people
     ///   most want to clean surface earliest in a progressive scan.
-    private func scopedOptions(newestFirst: Bool = true, sorted: Bool = true) -> PHFetchOptions {
+    private static func options(
+        scope: ScanScope,
+        newestFirst: Bool = true,
+        sorted: Bool = true
+    ) -> PHFetchOptions {
         let options = PHFetchOptions()
         options.includeHiddenAssets = false
         if sorted {
@@ -125,49 +154,57 @@ final class PhotoLibraryService {
     /// - We enumerate in windows of `pageSize`, snapshot each asset into a
     ///   `Sendable` `PhotoAsset`, and yield the page. The heavyweight
     ///   `PHAsset`s in the window go out of scope immediately.
-    /// - The caller (scan coordinator) analyses one page, persists results,
-    ///   then requests the next — so peak memory is O(pageSize), not O(library).
     ///
-    /// Only still images are enumerated (no videos) for Phase 1.
-    func assetPages() -> AsyncStream<AssetPage> {
+    /// Production runs in a detached task, which matters for two reasons. An
+    /// `AsyncStream`'s builder closure runs synchronously on the caller's
+    /// executor, so this used to enumerate and snapshot the *entire* library on
+    /// the main actor before the consumer saw a single page — an unbounded
+    /// stall, and it defeated the paging it was written to provide. Detaching
+    /// also lets page N+1 be fetched while page N is being analysed, and gives
+    /// the enumeration something to check for cancellation.
+    ///
+    /// Only still images are enumerated (no videos): Vision analysis is for
+    /// stills, and videos reach the UI through their own category fetches.
+    func assetPages(scope: ScanScope) -> AsyncStream<AssetPage> {
         AsyncStream { continuation in
-            // Newest first: in a progressive scan the most recent photos are the
-            // ones the user wants to act on soonest.
-            let fetch = PHAsset.fetchAssets(with: .image, options: self.scopedOptions())
+            let task = Task.detached(priority: .userInitiated) { [pageSize] in
+                let fetch = PHAsset.fetchAssets(with: .image, options: Self.options(scope: scope))
 
-            let total = fetch.count
-            guard total > 0 else {
-                continuation.finish()
-                return
-            }
-
-            var pageIndex = 0
-            var start = 0
-            while start < total {
-                let end = min(start + pageSize, total)
-                var page: [PhotoAsset] = []
-                page.reserveCapacity(end - start)
-
-                // `enumerateObjects(at:)` faults assets in lazily for just this
-                // window; each `phAsset` is released as the loop advances.
-                let indexSet = IndexSet(integersIn: start..<end)
-                fetch.enumerateObjects(at: indexSet, options: []) { phAsset, _, _ in
-                    page.append(Self.snapshot(phAsset))
+                let total = fetch.count
+                guard total > 0 else {
+                    continuation.finish()
+                    return
                 }
 
-                let isLast = end >= total
-                continuation.yield(
-                    AssetPage(
-                        assets: page,
-                        pageIndex: pageIndex,
-                        isLastPage: isLast,
-                        totalCount: total
+                var pageIndex = 0
+                var start = 0
+                while start < total {
+                    if Task.isCancelled { break }
+
+                    let end = min(start + pageSize, total)
+                    var page: [PhotoAsset] = []
+                    page.reserveCapacity(end - start)
+
+                    // `enumerateObjects(at:)` faults assets in lazily for just
+                    // this window; each `phAsset` is released as it advances.
+                    fetch.enumerateObjects(at: IndexSet(integersIn: start..<end), options: []) { phAsset, _, _ in
+                        page.append(Self.snapshot(phAsset))
+                    }
+
+                    continuation.yield(
+                        AssetPage(
+                            assets: page,
+                            pageIndex: pageIndex,
+                            isLastPage: end >= total,
+                            totalCount: total
+                        )
                     )
-                )
-                pageIndex += 1
-                start = end
+                    pageIndex += 1
+                    start = end
+                }
+                continuation.finish()
             }
-            continuation.finish()
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -196,22 +233,8 @@ final class PhotoLibraryService {
 
     /// Fetches all screenshots (newest first) from the system "Screenshots"
     /// smart album, as `Sendable` snapshots.
-    func fetchScreenshots() -> [PhotoAsset] {
-        let albums = PHAssetCollection.fetchAssetCollections(
-            with: .smartAlbum,
-            subtype: .smartAlbumScreenshots,
-            options: nil
-        )
-        guard let album = albums.firstObject else { return [] }
-
-        let assets = PHAsset.fetchAssets(in: album, options: scopedOptions())
-
-        var result: [PhotoAsset] = []
-        result.reserveCapacity(assets.count)
-        assets.enumerateObjects { asset, _, _ in
-            result.append(Self.snapshot(asset))
-        }
-        return result
+    func fetchScreenshots(scope: ScanScope) async -> [PhotoAsset] {
+        assets(inSmartAlbum: .smartAlbumScreenshots, scope: scope)
     }
 
     /// Photos iOS itself identifies as selfies, from the system "Selfies" smart
@@ -222,29 +245,22 @@ final class PhotoLibraryService {
     /// parent takes of their child matched it perfectly. What actually makes a
     /// selfie is the front-facing camera, which iOS tracks and exposes here — so
     /// this is both more correct and free (no Vision pass needed).
-    func fetchSelfies() -> [PhotoAsset] {
+    func fetchSelfies(scope: ScanScope) async -> [PhotoAsset] {
+        assets(inSmartAlbum: .smartAlbumSelfPortraits, scope: scope)
+    }
+
+    private func assets(
+        inSmartAlbum subtype: PHAssetCollectionSubtype,
+        scope: ScanScope
+    ) -> [PhotoAsset] {
         let albums = PHAssetCollection.fetchAssetCollections(
             with: .smartAlbum,
-            subtype: .smartAlbumSelfPortraits,
+            subtype: subtype,
             options: nil
         )
         guard let album = albums.firstObject else { return [] }
 
-        let assets = PHAsset.fetchAssets(in: album, options: scopedOptions())
-        var result: [PhotoAsset] = []
-        result.reserveCapacity(assets.count)
-        assets.enumerateObjects { asset, _, _ in
-            result.append(Self.snapshot(asset))
-        }
-        return result
-    }
-
-    /// All videos in the library, newest first, as `Sendable` snapshots (each
-    /// carrying its `duration`). Ordering by real file size is done by the UI
-    /// once sizes have been measured, since size isn't a fetchable sort key.
-    func fetchVideos() -> [PhotoAsset] {
-        let assets = PHAsset.fetchAssets(with: .video, options: scopedOptions())
-
+        let assets = PHAsset.fetchAssets(in: album, options: Self.options(scope: scope))
         var result: [PhotoAsset] = []
         result.reserveCapacity(assets.count)
         assets.enumerateObjects { asset, _, _ in
@@ -256,10 +272,15 @@ final class PhotoLibraryService {
     /// Videos **and** the subset that are screen recordings, in a single pass.
     ///
     /// Fetching these separately meant enumerating every video twice and doing
-    /// the (not cheap) `PHAssetResource` lookup for each one again. Callers that
-    /// need both should use this.
-    func fetchVideosAndScreenRecordings() -> (videos: [PhotoAsset], recordings: [PhotoAsset]) {
-        let assets = PHAsset.fetchAssets(with: .video, options: scopedOptions())
+    /// the (not cheap) `PHAssetResource` lookup for each one again.
+    ///
+    /// Screen recordings are detected heuristically: iOS exposes no public
+    /// smart-album subtype for them, so we match ReplayKit's filename signature
+    /// (`RPReplay_Final…`). A recording the user renamed won't be detected —
+    /// acceptable, since that only means it doesn't appear, never a false
+    /// deletion.
+    func fetchVideosAndScreenRecordings(scope: ScanScope) async -> (videos: [PhotoAsset], recordings: [PhotoAsset]) {
+        let assets = PHAsset.fetchAssets(with: .video, options: Self.options(scope: scope))
 
         var videos: [PhotoAsset] = []
         var recordings: [PhotoAsset] = []
@@ -275,41 +296,19 @@ final class PhotoLibraryService {
         return (videos, recordings)
     }
 
-    /// Screen recordings, detected heuristically. iOS exposes no public
-    /// smart-album subtype for them, so we match ReplayKit's filename signature:
-    /// Control-Center recordings are written as `RPReplay_Final…​.mp4` /
-    /// `RPReplay_Original…`, so an `RPReplay` prefix on *any* of the asset's
-    /// resources is the reliable on-device signal. Everything stays on-device;
-    /// if nothing matches we return an empty list. (A recording the user
-    /// manually renamed won't be detected — acceptable: it just won't appear
-    /// here, never a false deletion.)
-    func fetchScreenRecordings() -> [PhotoAsset] {
-        let assets = PHAsset.fetchAssets(with: .video, options: scopedOptions())
-
-        var result: [PhotoAsset] = []
-        assets.enumerateObjects { asset, _, _ in
-            let isScreenRecording = PHAssetResource.assetResources(for: asset)
-                .contains { $0.originalFilename.lowercased().hasPrefix("rpreplay") }
-            if isScreenRecording {
-                result.append(Self.snapshot(asset))
-            }
-        }
-        return result
-    }
-
     /// Candidate set for the "Big files" category: every Live Photo plus the
     /// highest-resolution stills (up to `stillLimit`). Reading real on-disk size
     /// for a whole library is expensive, so we bound the pool cheaply here —
-    /// resolution is a good proxy for which stills are large — and let the UI
-    /// measure exact sizes for just this set via `fileSizes(for:)` and sort.
+    /// resolution is a good proxy for which stills are large — and let the caller
+    /// measure exact sizes for just this set via `fileSizes(for:)`.
     ///
     /// Note: `PHFetchOptions` only supports sorting by creation/modification
     /// date, so we do NOT sort the fetch by resolution (that would raise at
     /// runtime). We snapshot into value types — releasing each `PHAsset` as the
     /// lazy enumeration advances, so peak memory stays bounded — then rank the
     /// (small) `PhotoAsset` snapshots by pixel area in memory.
-    func fetchLargeFileCandidates(stillLimit: Int) -> [PhotoAsset] {
-        let assets = PHAsset.fetchAssets(with: .image, options: scopedOptions(sorted: false))
+    func fetchLargeFileCandidates(scope: ScanScope, stillLimit: Int) async -> [PhotoAsset] {
+        let assets = PHAsset.fetchAssets(with: .image, options: Self.options(scope: scope, sorted: false))
 
         var livePhotos: [PhotoAsset] = []
         var stills: [PhotoAsset] = []
@@ -333,7 +332,7 @@ final class PhotoLibraryService {
     }
 
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`
-    /// value type. Called on the main actor while the asset is valid.
+    /// value type, so no `PHAsset` ever escapes this file.
     private static func snapshot(_ asset: PHAsset) -> PhotoAsset {
         let kind: PhotoAsset.MediaKind = switch asset.mediaType {
         case .image: .image
@@ -357,9 +356,7 @@ final class PhotoLibraryService {
 
     // MARK: - Pixel loading (for the analyzer)
 
-    /// Loads a downscaled `CGImage` for analysis by identifier. Re-resolves the
-    /// live `PHAsset` here (on the main actor) so no `PHAsset` ever crosses an
-    /// actor boundary.
+    /// Loads a downscaled `CGImage` for analysis by identifier.
     ///
     /// iCloud handling matters for correctness, not just completeness. With
     /// "Optimize iPhone Storage" many assets exist locally only as a small
@@ -368,8 +365,14 @@ final class PhotoLibraryService {
     /// photo would be reported blurry) and its feature print wouldn't match the
     /// full-resolution one, breaking duplicate detection. So a degraded image is
     /// never accepted — we report `.inCloud` and let the caller decide.
+    ///
+    /// - Parameter targetSize: the square bound to downscale into. Supplied by
+    ///   the caller from `AnalysisConfiguration` rather than fixed here, because
+    ///   it is a measured trade-off between analysis cost and detection quality
+    ///   — see `AnalysisConfiguration.analysisImageSize`.
     func analysisImage(
         for localIdentifier: String,
+        targetSize: Int,
         allowNetwork: Bool = false
     ) async -> AnalysisImage {
         guard let asset = Self.fetchAsset(localIdentifier) else { return .unavailable }
@@ -380,17 +383,13 @@ final class PhotoLibraryService {
         options.resizeMode = .fast
         options.isSynchronous = false
 
-        return await withCheckedContinuation { continuation in
-            var didResume = false
-            func finish(_ result: AnalysisImage) {
-                guard !didResume else { return }
-                didResume = true
-                continuation.resume(returning: result)
-            }
+        let size = CGSize(width: targetSize, height: targetSize)
 
+        return await withCheckedContinuation { continuation in
+            let box = ResumeOnce()
             imageManager.requestImage(
                 for: asset,
-                targetSize: analysisTargetSize,
+                targetSize: size,
                 contentMode: .aspectFit,
                 options: options
             ) { image, info in
@@ -401,16 +400,16 @@ final class PhotoLibraryService {
                     // Only a placeholder so far. If the real one is in iCloud and
                     // we may not fetch it, no better callback is coming — resolve
                     // now rather than waiting forever.
-                    if isInCloud && !allowNetwork { finish(.inCloud) }
+                    if isInCloud && !allowNetwork { box.resume(continuation, with: .inCloud) }
                     return
                 }
 
                 if let cgImage = image?.cgImage {
-                    finish(.image(cgImage))
+                    box.resume(continuation, with: .image(cgImage))
                 } else if isInCloud {
-                    finish(.inCloud)
+                    box.resume(continuation, with: .inCloud)
                 } else {
-                    finish(.unavailable)
+                    box.resume(continuation, with: .unavailable)
                 }
             }
         }
@@ -422,19 +421,33 @@ final class PhotoLibraryService {
 
     // MARK: - UI thumbnails
 
+    // These three stay `@MainActor`, unlike everything else in this file.
+    //
+    // `UIImage` is not `Sendable`, so handing one back from a nonisolated async
+    // method means a non-Sendable value crossing an isolation boundary — the
+    // kind of thing that either fails to compile under strict concurrency or
+    // compiles today and breaks on a compiler update. There is also nothing to
+    // gain: the expensive decode happens inside `PHImageManager` on its own
+    // queue either way, and these are per-tile and lazy, so the main actor is
+    // only ever briefly occupied. The bottleneck this file was refactored to
+    // remove was the bulk enumeration, not thumbnails.
+
     /// Square-cropped thumbnail for a filmstrip tile.
     ///
     /// Unlike analysis, UI image requests permit network access so iCloud-only
     /// photos still render.
+    @MainActor
     func thumbnail(for localIdentifier: String, targetSize: CGSize) async -> UIImage? {
         await requestUIImage(localIdentifier, targetSize: targetSize, contentMode: .aspectFill)
     }
 
     /// Large, aspect-fit image for the full-screen preview (whole photo visible).
+    @MainActor
     func previewImage(for localIdentifier: String, targetSize: CGSize) async -> UIImage? {
         await requestUIImage(localIdentifier, targetSize: targetSize, contentMode: .aspectFit)
     }
 
+    @MainActor
     private func requestUIImage(
         _ localIdentifier: String,
         targetSize: CGSize,
@@ -449,61 +462,55 @@ final class PhotoLibraryService {
         options.isSynchronous = false
 
         return await withCheckedContinuation { continuation in
-            var didResume = false
+            let box = ResumeOnce()
             imageManager.requestImage(
                 for: asset,
                 targetSize: targetSize,
                 contentMode: contentMode,
                 options: options
             ) { image, info in
-                if didResume { return }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 if isDegraded { return }        // wait for the full-quality pass
-                didResume = true
-                continuation.resume(returning: image)
+                box.resume(continuation, with: image)
             }
         }
     }
 
     // MARK: - On-disk sizes
 
-    /// Total on-disk byte size for each asset id, fetched in one query.
+    /// Total on-disk byte size for each asset id, in one query.
     ///
     /// Sums every `PHAssetResource` for the asset (original + any edited render),
     /// which is what deleting it actually frees. `fileSize` isn't a public
     /// property, so we read it via KVC — the long-standing, widely-used approach;
     /// assets whose size can't be read are simply omitted.
-    func fileSizes(for identifiers: [String]) -> [String: Int64] {
+    ///
+    /// This replaces a former pair of near-identical methods (`fileSizes` and
+    /// `assetFileSizes`) that differed only in isolation. With the service off
+    /// the main actor there is only one correct version.
+    func fileSizes(for identifiers: [String]) async -> [String: Int64] {
         guard !identifiers.isEmpty else { return [:] }
-        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
-
-        var sizes: [String: Int64] = [:]
-        fetched.enumerateObjects { asset, _, _ in
-            let resources = PHAssetResource.assetResources(for: asset)
-            var total: Int64 = 0
-            var found = false
-            for resource in resources {
-                if let number = resource.value(forKey: "fileSize") as? NSNumber {
-                    total += number.int64Value
-                    found = true
-                }
-            }
-            if found { sizes[asset.localIdentifier] = total }
-        }
-        return sizes
+        return Self.sizes(of: PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil))
     }
 
-    /// Off-main variant of `fileSizes(for:)` for large id sets.
+    /// On-disk size of every asset **within the given scope**, keyed by id.
     ///
-    /// The dashboard summary measures every duplicate extra, screenshot, video,
-    /// big file and recording, which can be thousands of assets — far too many to
-    /// walk on the main actor without a visible hitch. The Photos read APIs used
-    /// here are thread-safe, so this runs off the main actor and the coordinator
-    /// awaits it from a background task.
-    nonisolated func assetFileSizes(for identifiers: [String]) async -> [String: Int64] {
-        guard !identifiers.isEmpty else { return [:] }
-        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+    /// One pass serves two jobs: summing it gives the dashboard's total, and the
+    /// per-asset sizes are the cheap pre-filter `ExactDuplicateFinder` uses to
+    /// find identical copies.
+    ///
+    /// The scope predicate is not an optimisation detail — it was missing, and
+    /// its absence meant this walked the *entire* library even when the user had
+    /// asked for "past month". Measured at 2.2 s for 228 assets (~9.6 ms each,
+    /// dominated by the `PHAssetResource` lookup), which extrapolates to minutes
+    /// on a large library — the single most expensive thing the app does, and
+    /// the one place the app's only cost lever did nothing at all.
+    func libraryFileSizes(scope: ScanScope) async -> [String: Int64] {
+        let options = Self.options(scope: scope, sorted: false)
+        return Self.sizes(of: PHAsset.fetchAssets(with: options))
+    }
 
+    private static func sizes(of fetched: PHFetchResult<PHAsset>) -> [String: Int64] {
         var sizes: [String: Int64] = [:]
         fetched.enumerateObjects { asset, _, _ in
             var total: Int64 = 0
@@ -518,39 +525,6 @@ final class PhotoLibraryService {
         }
         return sizes
     }
-
-    /// On-disk size of **every** asset in the library, keyed by local identifier.
-    ///
-    /// One pass serves two jobs: summing it gives the dashboard's "of X used"
-    /// figure, and the per-asset sizes are the cheap pre-filter that
-    /// `ExactDuplicateFinder` uses to find identical copies.
-    ///
-    /// `nonisolated` on purpose: this does a `fileSize` resource lookup for every
-    /// asset, which is heavy on a large library. The Photos read APIs used here
-    /// are thread-safe, so we run it off the main actor (kicked off in the
-    /// background once per scan) to avoid blocking the UI. It never mutates
-    /// anything and touches no main-actor state.
-    nonisolated func libraryFileSizes() async -> [String: Int64] {
-        let options = PHFetchOptions()
-        options.includeHiddenAssets = false
-        let assets = PHAsset.fetchAssets(with: options)
-
-        var sizes: [String: Int64] = [:]
-        assets.enumerateObjects { asset, _, _ in
-            var total: Int64 = 0
-            var found = false
-            for resource in PHAssetResource.assetResources(for: asset) {
-                if let number = resource.value(forKey: "fileSize") as? NSNumber {
-                    total += number.int64Value
-                    found = true
-                }
-            }
-            if found { sizes[asset.localIdentifier] = total }
-        }
-        return sizes
-    }
-
-    // MARK: - Deletion (Phase 2 entry point — kept here for cohesion)
 
     // MARK: - Albums
 
@@ -558,13 +532,7 @@ final class PhotoLibraryService {
     ///
     /// This only *references* existing assets in a new collection — nothing is
     /// copied, nothing is removed, and the originals stay exactly where they are.
-    ///
-    /// `nonisolated` for the same reason as `deleteAssets`: `PHPhotoLibrary`
-    /// runs the change block and fires its completion on its own private queue,
-    /// and awaiting that from the main actor makes the Swift 6 runtime's
-    /// isolation check trap. Assets are fetched inside the block so no
-    /// non-`Sendable` fetch result crosses the boundary.
-    nonisolated func createAlbum(named title: String, withAssetIDs ids: [String]) async throws {
+    func createAlbum(named title: String, withAssetIDs ids: [String]) async throws {
         guard !ids.isEmpty else { return }
         try await PHPhotoLibrary.shared().performChanges {
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
@@ -575,24 +543,24 @@ final class PhotoLibraryService {
         }
     }
 
+    // MARK: - Deletion
+
     /// Deletes assets by identifier. **This is the only method that removes
     /// photos, and it is only ever invoked after explicit user confirmation in
     /// the UI.** The system also shows its own confirmation sheet.
     ///
-    /// Concurrency: this method is deliberately `nonisolated`. `PHPhotoLibrary`
-    /// runs the change block *and* fires its completion on its own private
-    /// background queue (`com.apple.PHPhotoLibrary.changes`). If this awaited
-    /// from the main actor, the Swift 6 runtime's isolation check would assert
-    /// it's on the main queue when the completion lands on the Photos queue and
-    /// **trap** (`EXC_BREAKPOINT` / `dispatch_assert_queue_fail`). Running the
-    /// call off any actor removes that requirement; the caller re-hops to
-    /// `@MainActor` normally when this async method returns. The assets are also
-    /// fetched *inside* the change block so no non-`Sendable` `PHFetchResult`
-    /// is captured across the `@Sendable` boundary.
+    /// `PHPhotoLibrary` runs the change block *and* fires its completion on its
+    /// own private queue. When this service was `@MainActor`, awaiting that from
+    /// the main actor made the Swift 6 runtime's isolation check trap
+    /// (`EXC_BREAKPOINT`) — a real crash that had to be fixed with an explicit
+    /// `nonisolated`. Now that the whole service is off the main actor, that
+    /// hazard is structural rather than remembered. The assets are still fetched
+    /// *inside* the change block so no non-`Sendable` `PHFetchResult` crosses the
+    /// `@Sendable` boundary.
     ///
     /// - Returns: `true` if the user confirmed and deletion succeeded.
     @discardableResult
-    nonisolated func deleteAssets(withIdentifiers ids: [String]) async throws -> Bool {
+    func deleteAssets(withIdentifiers ids: [String]) async throws -> Bool {
         guard !ids.isEmpty else { return false }
         do {
             try await PHPhotoLibrary.shared().performChanges {
@@ -606,5 +574,27 @@ final class PhotoLibraryService {
             if (error as NSError).code == 3072 { return false } // user cancelled
             throw error
         }
+    }
+}
+
+/// Guards a `CheckedContinuation` against the multiple callbacks
+/// `PHImageManager` can deliver for one request.
+///
+/// A plain `var didResume` captured by the callback was fine while this service
+/// was main-actor isolated and the callbacks arrived serially. Off the main
+/// actor that is a mutable capture in a `@Sendable` closure — resuming a
+/// continuation twice is a hard crash, so the guard needs to be genuinely
+/// atomic rather than merely single-threaded by accident.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+
+    func resume<T>(_ continuation: CheckedContinuation<T, Never>, with value: T) {
+        lock.lock()
+        let alreadyResumed = resumed
+        resumed = true
+        lock.unlock()
+        guard !alreadyResumed else { return }
+        continuation.resume(returning: value)
     }
 }

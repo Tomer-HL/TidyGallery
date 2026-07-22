@@ -264,6 +264,71 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 19 (acting on the measurements): the Phase 18 instrumentation was pointed
+at a real 228-photo library on an iPhone 11 Pro Max, and it answered the wrong
+question — which is the useful kind of answer.
+
+**Memory was never the risk.** Peak footprint 59.8 MB against 1.99 GB of
+headroom. Every OOM precaution in this README works, and none of it was the
+binding constraint. **Time is**: 269 ms per fresh photo, projecting to roughly
+**45 minutes for 20,000 photos** — optimistic, since sustained Vision work will
+thermally throttle.
+
+Three separate scaling problems, all traceable to one decision.
+`PhotoLibraryService` was `@MainActor`, on the reasoning that Photos delivers its
+change notifications there. What that actually bought:
+
+- The "instant" metadata pass measured 4.5 ms **per asset on the main thread** —
+  607 ms at 110 photos, 1,022 ms at 228, and about **90 seconds of frozen UI** at
+  20,000. The pass whose entire selling point is appearing immediately.
+- Analysis achieved only 2–3× parallelism from a 4-wide pool, because every
+  worker queued on the main actor for `analysisImage`, which also ran a
+  `PHAsset.fetchAssets` per photo. The ceiling was the actor, not the CPU.
+- `assetPages()` built its `AsyncStream` with a closure that runs synchronously
+  on the caller's executor, so it enumerated and snapshotted the *whole* library
+  on the main actor before the consumer saw one page — defeating the paging it
+  existed to provide.
+
+So the service is now `Sendable` with no isolation at all. The Photos read APIs
+are thread-safe; this file already depended on that for `libraryFileSizes`. Three
+details are load-bearing and easy to undo by accident:
+
+- The heavy enumerations are `async` **even though they never await**. A
+  nonisolated *sync* function called from `@MainActor` still runs on the main
+  actor, and so does the body of a `Task {}` or `async let` started there. Only a
+  nonisolated *async* function is guaranteed to reach the cooperative pool
+  (SE-0338). Dropping `async` would silently re-block the main thread with no
+  diagnostic anywhere.
+- `scope` is no longer mutable state on the service — shared mutable state is
+  precisely what made it hard to move — so every date-filtered fetch takes it.
+- The UI thumbnail methods stay `@MainActor`, alone in the file, because
+  `UIImage` isn't `Sendable` and there was nothing to win: the decode happens on
+  `PHImageManager`'s own queue regardless.
+
+`libraryFileSizes` also **had no scope predicate** — it walked every asset in the
+library even when the user asked for one month, at ~9.6 ms each (2.2 s for 228,
+minutes at 20k). It was simultaneously the most expensive thing the app did and
+the one place the app's only cost lever did nothing. Now scoped, which makes the
+dashboard's total a measure of what was scanned — so the copy says "scanned"
+rather than "in your library", because it would otherwise be a wrong number.
+
+Tuning, now that the actor is out of the way: `analysisImageSize` (384, down from
+512 — 44% fewer pixels, and both decode and Vision scale with pixel count) and
+`maxConcurrentAnalyses` (6, up from a 4 that was never actually reached). Both
+live in `AnalysisConfiguration`. **`analysisImageSize` is coupled to two things
+that break quietly if it moves**: Laplacian sharpness is scale-dependent, so
+`blurrySinglesSharpnessCeiling` is calibrated for a specific size, and face
+landmarks need faces to span enough pixels — going much lower starts losing the
+small distant faces in group shots, which is exactly where eyes-closed detection
+earns its keep.
+
+Still outstanding: aesthetics runs `CalculateImageAestheticsScoresRequest` as a
+**second** full Vision pass, so the "one Vision pass per photo" claim in Phase 11
+was never true. Folding it into the shared `VNImageRequestHandler` needs
+`VNCalculateImageAestheticsScoresRequest`, whose availability hasn't been
+verified against the SDK — and this project has already been bitten once by
+guessing at a Vision symbol.
+
 Phase 18 (measuring it, finally): every memory claim in this README — paged
 fetches, snapshot value types, bounded concurrency, ~512px analysis images — was
 an *assertion*. None had been measured on hardware against a real library. A
@@ -405,7 +470,8 @@ Phase 11 (scan performance): four fixes, in rough order of impact.
 1. **Batched cache writes.** `store` issued a fetch *and* a `save()` per photo,
    so a 20k library meant 20k queries and 20k disk writes. `storeBatch` collapses
    each page to one query and one write — by far the biggest win.
-2. **One Vision pass per photo.** Feature print, faces and classification now
+2. **One Vision pass per photo.** *(Correction: not quite — see Phase 19.
+   Aesthetics still runs a second pass.)* Feature print, faces and classification
    share a single `VNImageRequestHandler.perform`. Classification previously ran
    in its own handler, and every handler re-processes the image, so this roughly
    halves the Vision work. Classification is optional, so a failed batch retries

@@ -374,7 +374,9 @@ struct AssetCleanupScreen: View {
 
     private func loadSizes() async {
         guard let library, sizes.isEmpty, !assets.isEmpty else { return }
-        sizes = library.fileSizes(for: assets.map(\.id))
+        // `await`: measuring on-disk size is a per-asset PHAssetResource
+        // lookup, ~10 ms each. Off the main actor it doesn't stutter the grid.
+        sizes = await library.fileSizes(for: assets.map(\.id))
     }
 
     private func performDelete() async {
