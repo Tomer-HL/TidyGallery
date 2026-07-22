@@ -16,6 +16,7 @@ struct CleanupHomeView: View {
     let coordinator: LibraryScanCoordinator
 
     @State private var showSettings = false
+    @State private var showDiagnostics = false
 
     // Colours shared by the ring segments and the breakdown legend.
     private let colorExactDuplicates = Color.green
@@ -85,6 +86,11 @@ struct CleanupHomeView: View {
                         } label: {
                             Label("Detection settings", systemImage: "slider.horizontal.3")
                         }
+                        Button {
+                            showDiagnostics = true
+                        } label: {
+                            Label("Diagnostics", systemImage: "stopwatch")
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -95,6 +101,9 @@ struct CleanupHomeView: View {
                 SettingsScreen(current: coordinator.tuning) { newTuning in
                     Task { await coordinator.applyTuning(newTuning) }
                 }
+            }
+            .sheet(isPresented: $showDiagnostics) {
+                DiagnosticsScreen(coordinator: coordinator)
             }
             .overlay {
                 if coordinator.isRetuning {

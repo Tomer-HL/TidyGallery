@@ -42,8 +42,13 @@ TidyGallery/
 │   └── LibraryScanCoordinator.swift  @Observable orchestrator the UI watches
 └── Utilities/
     ├── BlurDetector.swift            Variance-of-Laplacian via Accelerate
-    └── FaceLandmarkEvaluator.swift   EAR + mouth-curvature geometry (pure)
+    ├── FaceLandmarkEvaluator.swift   EAR + mouth-curvature geometry (pure)
+    ├── MemoryProbe.swift             phys_footprint + jetsam headroom
+    └── DeviceSummary.swift           Hardware/OS/build line for reports
 ```
+
+Phase 18's instrumentation also adds `Models/ScanMetrics.swift`,
+`Persistence/ScanMetricsStore.swift` and `Views/DiagnosticsScreen.swift`.
 
 ## How the grill points were addressed
 
@@ -162,6 +167,35 @@ If a step fails (Apple ID two-factor, driver issues, "app not available"),
 that's usually the sideload tool, not the build — the `.ipa` in the artifact is
 the same one either tool signs.
 
+## Validating it at scale (the current step)
+
+The engine is feature-complete; what it has never been is *measured*. Run this
+before doing any more feature or polish work, because the result changes what's
+worth building next.
+
+1. Sideload the current build (see above) onto a phone with a real library.
+2. Settings → **Detection settings** is not what you want here — use menu →
+   **Diagnostics**.
+3. Scan at **Past month** first. Note peak footprint and lowest headroom.
+4. Scan again at **Entire library**. Leave Diagnostics open while it runs if you
+   want to watch memory move; it updates live.
+5. **Share report** and send yourself the text.
+
+What the numbers mean:
+
+| Reading | Interpretation |
+|---|---|
+| Lowest headroom > ~300 MB | Comfortable. The paging design is doing its job. |
+| Lowest headroom 50–300 MB | Works, but tight on smaller devices. Lower `maxConcurrentAnalyses` or `pageSize`. |
+| Lowest headroom < 50 MB | Too close to the edge; a jetsam kill is a matter of luck. |
+| "A scan was terminated mid-run" | It already happened. This is the finding. |
+| Analysis failures in the thousands | Systematic, not bad photos — read the reasons. |
+| Peak footprint climbing page over page | A leak: something is being retained across pages, which is exactly what the paging is meant to prevent. |
+
+The projected time for 20,000 photos is an order-of-magnitude estimate, not a
+promise — it extrapolates the measured per-photo cost at the concurrency actually
+achieved.
+
 ## Built so far
 
 Phase 1 (engine): batch fetch, feature-print clustering with time-gating,
@@ -229,6 +263,47 @@ videos, Big files, Screen recordings), **Clutter** (Screenshots, Possibly
 blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summary
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
+
+Phase 18 (measuring it, finally): every memory claim in this README — paged
+fetches, snapshot value types, bounded concurrency, ~512px analysis images — was
+an *assertion*. None had been measured on hardware against a real library. A
+scan now instruments itself.
+
+`ScanMetrics` (a pure, `Codable`, `Sendable` value type, so the aggregation and
+report formatting are unit-testable without Photos, Vision or a device) records
+per-phase wall clock, counts by outcome, and memory. `DiagnosticsScreen` (menu →
+Diagnostics) shows it and shares it as plain text.
+
+Three things about it are deliberate:
+
+**Headroom, not footprint.** `MemoryProbe` reports both `phys_footprint` and
+`os_proc_available_memory()`. Peak footprint alone predicts nothing — the jetsam
+limit differs by device and by what else is resident, so "peaked at 380 MB" is
+comfortable on one phone and fatal on another. Headroom is how many bytes the
+process may still allocate before it is killed, which is the number the question
+"does this survive 20,000 photos on the smallest supported device?" actually
+turns on.
+
+**Detecting the kill that leaves no trace.** When iOS jetsams an app, the app
+runs no code: no `catch`, no `deinit`, no crash log of ours. It is invisible from
+the inside. So a scan writes a marker before it starts and clears it at the end
+(`ScanMetricsStore`, in `UserDefaults` — it has to survive a kill mid-SwiftData-
+write and be readable before the model container exists). A later launch finding
+the marker still set means the previous scan was terminated mid-flight, which for
+a photo-analysis pass is an OOM until proven otherwise. That one boolean is the
+most valuable thing the instrumentation produces, and Diagnostics leads with it.
+
+**A real bug found by writing this.** Analysis ran `try await analyzer.analyze(…)`
+directly inside the task group, so a Vision throw propagated out and tore down
+the group — failing the *entire scan*. Across 20,000 photos, one image Vision
+dislikes took everything with it. Now the failure is caught per photo, counted by
+reason, and the scan continues; the reasons are listed in Diagnostics, where a
+handful reads as normal and thousands of the same message reads as systematic.
+
+Timings are carried back on the task result rather than written to a shared
+counter, so nothing in the hot path needs an actor hop: the accumulation happens
+on the main actor, where it's trivially race-free. Cost is a few integer
+increments per photo and one `task_info` call per page.
 
 Phase 17 (onboarding + polish): a one-time welcome screen (`OnboardingView`,
 gated on a `UserDefaults` flag) runs before the first scan. For an app that

@@ -14,16 +14,35 @@
 import Foundation
 import Observation
 
-/// One analysed photo's outcome, including whether it was skipped because it
-/// lives only in iCloud.
+/// One analysed photo's outcome, plus how long each stage of it took.
 ///
 /// File scope on purpose: it's produced inside the nonisolated analysis task
 /// group, and nesting it in the `@MainActor` coordinator would make it
 /// main-actor isolated too.
+///
+/// Timings are carried back on the result rather than written to a shared
+/// counter: the task group body is nonisolated and runs several photos at once,
+/// so anything it touched directly would need an actor hop per photo. Returning
+/// two `Double`s costs nothing and keeps the accumulation on the main actor,
+/// where it's trivially race-free.
 private struct PageResult: Sendable {
+    enum Outcome: Sendable {
+        case analysed(AnalyzedImage)
+        /// The full-quality original lives only in iCloud and we may not fetch it.
+        case inCloud
+        /// Photos returned no usable image.
+        case unavailable
+        /// Vision threw. Carried (not thrown) so one bad photo cannot abort the
+        /// whole scan — see `process(page:)`.
+        case failed(String)
+    }
+
     let index: Int
-    let analysis: AnalyzedImage?
-    let wasInCloud: Bool
+    let outcome: Outcome
+    /// Seconds spent in the Photos image request (decode + downscale).
+    let imageLoadSeconds: Double
+    /// Seconds spent in Vision.
+    let visionSeconds: Double
 }
 
 @MainActor
@@ -152,6 +171,42 @@ final class LibraryScanCoordinator {
     /// How much of the library the current scan covers.
     private(set) var scope: ScanScope = ScanScopeStore.load()
 
+    /// Instrumentation for the current (or most recent) scan: where the time
+    /// went, peak memory, and what couldn't be analysed. Surfaced by
+    /// `DiagnosticsScreen`; costs a few integer increments per photo.
+    private(set) var metrics = ScanMetrics()
+
+    /// Samples memory and folds the reading into `metrics`. Cheap enough to call
+    /// per page and every `memorySampleInterval` photos.
+    private func sampleMemory() {
+        let sample = MemoryProbe.sample()
+        metrics.sampleMemory(
+            footprintBytes: sample.footprintBytes,
+            availableBytes: sample.availableBytes
+        )
+    }
+
+    private let memorySampleInterval = 25
+
+    /// Runs `body`, adding its duration to `metrics` under `phase`.
+    ///
+    /// `ContinuousClock` rather than `Date`: it's monotonic, so a clock
+    /// adjustment mid-scan can't produce a negative or wildly wrong duration.
+    private func timed<T>(_ phase: String, _ body: () throws -> T) rethrows -> T {
+        let start = ContinuousClock.now
+        defer { metrics.record(phase, seconds: (ContinuousClock.now - start).inSeconds) }
+        return try body()
+    }
+
+    /// Async variant of `timed(_:_:)`. Deliberately a different name rather than
+    /// an overload: overloading on closure async-ness alone is exactly the kind
+    /// of thing that resolves to the wrong one in a surprising context.
+    private func timedAsync<T>(_ phase: String, _ body: () async throws -> T) async rethrows -> T {
+        let start = ContinuousClock.now
+        defer { metrics.record(phase, seconds: (ContinuousClock.now - start).inSeconds) }
+        return try await body()
+    }
+
     /// Photos processed so far in the current scan, and the scoped total.
     private var scanProgress = 0
     private var scanTotal = 0
@@ -205,13 +260,28 @@ final class LibraryScanCoordinator {
     /// Runs a full scan and publishes the resulting stacks. Safe to call again;
     /// cached assets are skipped so subsequent runs are fast.
     func scan() async {
+        // Start a fresh measurement, and find out whether the *last* scan ever
+        // reached its end. It not having done so is the only observable trace an
+        // out-of-memory kill leaves behind — see `ScanMetricsStore`.
+        let previousDidNotFinish = ScanMetricsStore.markScanStarted()
+        metrics = ScanMetrics()
+        metrics.startedAt = Date()
+        metrics.scopeLabel = scope.label
+        metrics.deviceSummary = DeviceSummary.current
+        metrics.previousScanDidNotFinish = previousDidNotFinish
+        sampleMemory()
+
         phase = .requestingAccess
         let access = await library.requestAccess()
         switch access {
         case .denied, .restricted:
+            // Clear the marker: a refused scan is a normal outcome, and leaving
+            // it set would make the next launch cry OOM.
+            ScanMetricsStore.markScanFinished()
             phase = .accessDenied
             return
         case .notDetermined:
+            ScanMetricsStore.markScanFinished()
             phase = .failed("Photo access was not granted.")
             return
         case .authorized, .limited:
@@ -232,13 +302,19 @@ final class LibraryScanCoordinator {
         // instead of after the whole library has been analysed.
         analysedAssets = []
         stacks = []
-        refreshCategories()
+        timed(ScanMetrics.Phase.metadataPass) { refreshCategories() }
         phase = .finished(stackCount: 0)
 
         // STEP 2 — the slow pass, in the background. Duplicates and the content
         // categories need Vision, so they fill in progressively while the user
         // is already free to clean up the fast categories.
         await runAnalysis()
+
+        // The scan reached its end, so this launch is not the one that died.
+        metrics.finishedAt = Date()
+        sampleMemory()
+        ScanMetricsStore.markScanFinished()
+        ScanMetricsStore.save(metrics)
 
         startObserving()
     }
@@ -256,9 +332,15 @@ final class LibraryScanCoordinator {
         do {
             for await page in library.assetPages() {
                 scanTotal = page.totalCount
+                metrics.scopedAssetCount = page.totalCount
                 let (pageAssets, _) = try await process(page: page)
                 enriched.append(contentsOf: pageAssets)
                 analysedAssets = enriched
+                metrics.pagesProcessed += 1
+                // Once per page is the meaningful sampling point: peak footprint
+                // is reached while a page's images are in flight, and the page
+                // boundary is where everything should have been released again.
+                sampleMemory()
 
                 // Re-derive often at the start (so something appears quickly),
                 // then periodically — re-clustering every page would grow costly
@@ -270,6 +352,9 @@ final class LibraryScanCoordinator {
                 reportProgress(force: true)
             }
         } catch {
+            metrics.finishedAt = Date()
+            ScanMetricsStore.markScanFinished()
+            ScanMetricsStore.save(metrics)
             phase = .failed(error.localizedDescription)
             return
         }
@@ -394,6 +479,10 @@ final class LibraryScanCoordinator {
     /// re-enumerated the entire library just to hide one asset. Everything here
     /// works from lists already in memory.
     private func refreshDerivedCategories() {
+        timed(ScanMetrics.Phase.derivation) { deriveCategories() }
+    }
+
+    private func deriveCategories() {
         // Every category is filtered through `suggestable`, so a photo the user
         // chose to keep never reappears as a suggestion anywhere.
         screenshots = suggestable(rawScreenshots)
@@ -460,15 +549,22 @@ final class LibraryScanCoordinator {
 
         totalSizeTask?.cancel()
         totalSizeTask = Task { [weak self, library] in
+            let start = ContinuousClock.now
             let sizes = await library.libraryFileSizes()
             guard !Task.isCancelled else { return }
+            let measurementSeconds = (ContinuousClock.now - start).inSeconds
 
             let total = sizes.values.reduce(0, +)
             let groups = finder.groups(from: assets, sizes: sizes)
             let extras = finder.extras(in: groups)
             guard !Task.isCancelled else { return }
 
-            self?.applyLibraryMeasurements(total: total, groups: groups, extras: extras)
+            self?.applyLibraryMeasurements(
+                total: total,
+                groups: groups,
+                extras: extras,
+                measurementSeconds: measurementSeconds
+            )
         }
     }
 
@@ -477,8 +573,10 @@ final class LibraryScanCoordinator {
     private func applyLibraryMeasurements(
         total: Int64,
         groups: [[PhotoAsset]],
-        extras: [PhotoAsset]
+        extras: [PhotoAsset],
+        measurementSeconds: Double = 0
     ) {
+        metrics.record(ScanMetrics.Phase.sizeMeasurement, seconds: measurementSeconds)
         totalLibraryBytes = total
         exactDuplicateGroups = groups
         rawExactDuplicateExtras = extras
@@ -682,7 +780,9 @@ final class LibraryScanCoordinator {
     private func process(page: AssetPage) async throws -> (assets: [PhotoAsset], newlyAnalysed: Int) {
         // 1. Batch cache lookup.
         let keys = page.assets.map { (id: $0.id, modificationDate: $0.modificationDate) }
-        let cached = try await cache.freshAnalysis(for: keys)
+        let cached = try await timedAsync(ScanMetrics.Phase.cacheLookup) {
+            try await cache.freshAnalysis(for: keys)
+        }
 
         var enriched = page.assets
         var toAnalyse: [Int] = []   // indices into `enriched`
@@ -694,6 +794,7 @@ final class LibraryScanCoordinator {
                 enriched[i].sceneTags = hit.sceneTags
                 enriched[i].classificationLabels = hit.labels
                 scanProgress += 1          // cache hits are progress too
+                metrics.cacheHits += 1
             } else {
                 toAnalyse.append(i)
             }
@@ -716,19 +817,55 @@ final class LibraryScanCoordinator {
             func addTask(_ index: Int) {
                 let asset = enriched[index]
                 group.addTask { [library, analyzer] in
-                    switch await library.analysisImage(for: asset.id, allowNetwork: allowNetwork) {
+                    let loadStart = ContinuousClock.now
+                    let image = await library.analysisImage(for: asset.id, allowNetwork: allowNetwork)
+                    let loadSeconds = (ContinuousClock.now - loadStart).inSeconds
+
+                    switch image {
                     case let .image(cgImage):
-                        let result = try await analyzer.analyze(
-                            image: cgImage,
-                            isFavorite: asset.isFavorite
-                        )
-                        return PageResult(index: index, analysis: result, wasInCloud: false)
+                        let visionStart = ContinuousClock.now
+                        do {
+                            let result = try await analyzer.analyze(
+                                image: cgImage,
+                                isFavorite: asset.isFavorite
+                            )
+                            return PageResult(
+                                index: index,
+                                outcome: .analysed(result),
+                                imageLoadSeconds: loadSeconds,
+                                visionSeconds: (ContinuousClock.now - visionStart).inSeconds
+                            )
+                        } catch {
+                            // Deliberately caught, not rethrown. A throw here
+                            // would tear down the whole task group and fail the
+                            // entire scan — so across a 20,000-photo library, a
+                            // single image Vision dislikes would take everything
+                            // with it. Instead the photo is counted as a failure
+                            // and the scan carries on; the count and reason land
+                            // in Diagnostics.
+                            return PageResult(
+                                index: index,
+                                outcome: .failed(String(describing: error)),
+                                imageLoadSeconds: loadSeconds,
+                                visionSeconds: (ContinuousClock.now - visionStart).inSeconds
+                            )
+                        }
                     case .inCloud:
                         // Left un-analysed on purpose; reported to the user
                         // rather than silently dropped.
-                        return PageResult(index: index, analysis: nil, wasInCloud: true)
+                        return PageResult(
+                            index: index,
+                            outcome: .inCloud,
+                            imageLoadSeconds: loadSeconds,
+                            visionSeconds: 0
+                        )
                     case .unavailable:
-                        return PageResult(index: index, analysis: nil, wasInCloud: false)
+                        return PageResult(
+                            index: index,
+                            outcome: .unavailable,
+                            imageLoadSeconds: loadSeconds,
+                            visionSeconds: 0
+                        )
                     }
                 }
             }
@@ -747,17 +884,23 @@ final class LibraryScanCoordinator {
                 scanProgress += 1
                 reportProgress()
 
-                if pageResult.wasInCloud {
-                    iCloudSkippedCount += 1
+                // Timings are summed here, on the main actor, from values the
+                // tasks carried back — no shared mutable counter, no hop.
+                metrics.record(ScanMetrics.Phase.imageLoad, seconds: pageResult.imageLoadSeconds)
+                if pageResult.visionSeconds > 0 {
+                    metrics.record(ScanMetrics.Phase.vision, seconds: pageResult.visionSeconds)
                 }
+                if scanProgress % memorySampleInterval == 0 { sampleMemory() }
 
-                if let result = pageResult.analysis {
+                switch pageResult.outcome {
+                case let .analysed(result):
                     let index = pageResult.index
                     enriched[index].featurePrint = result.featurePrint
                     enriched[index].score = result.score
                     enriched[index].sceneTags = result.sceneTags
                     enriched[index].classificationLabels = result.labels
                     freshlyAnalysed += 1
+                    metrics.analysedFresh += 1
                     // 3. Collect for a single batched write below — persisting
                     // per photo meant a disk write for every image in the library.
                     let asset = enriched[index]
@@ -771,25 +914,44 @@ final class LibraryScanCoordinator {
                             labels: result.labels
                         )
                     )
+
+                case .inCloud:
+                    iCloudSkippedCount += 1
+                    metrics.iCloudSkipped += 1
+
+                case .unavailable:
+                    metrics.unavailable += 1
+
+                case let .failed(reason):
+                    metrics.noteFailure(reason)
                 }
+
                 // Refill.
                 if let next = iterator.next() {
                     addTask(next); inFlight += 1
                 }
             }
 
-            try? await cache.storeBatch(pending)
+            try? await timedAsync(ScanMetrics.Phase.cacheWrite) {
+                try await cache.storeBatch(pending)
+            }
             return (enriched, freshlyAnalysed)
         }
     }
 
     // MARK: - Clustering + scoring
 
+    /// Clustering is timed because it's the one step whose cost grows with the
+    /// *accumulated* working set rather than per photo — it re-runs periodically
+    /// during a progressive scan, so on a large library it's a plausible place
+    /// for time to quietly disappear.
     private func buildStacks(from assets: [PhotoAsset]) -> [PhotoStack] {
-        let clusters = StackBuilder(config: config).cluster(assets)
-        let byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
-        return ShotScorer(config: config)
-            .makeStacks(from: clusters, assetsByID: byID)
-            .sorted { $0.reclaimableCount > $1.reclaimableCount }
+        timed(ScanMetrics.Phase.clustering) {
+            let clusters = StackBuilder(config: config).cluster(assets)
+            let byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+            return ShotScorer(config: config)
+                .makeStacks(from: clusters, assetsByID: byID)
+                .sorted { $0.reclaimableCount > $1.reclaimableCount }
+        }
     }
 }
