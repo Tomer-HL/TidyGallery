@@ -97,7 +97,9 @@ struct ContentView: View {
 
             Button {
                 ScanScopeStore.save(scope)
-                Task { await coordinator.rescan(scope: scope) }
+                // `startRescan`, not an inline Task: the coordinator has to own
+                // the task for "Stop scanning" to have anything to cancel.
+                coordinator.startRescan(scope: scope)
             } label: {
                 Text("Scan my library")
                     .font(.headline)
@@ -123,6 +125,18 @@ struct ContentView: View {
                     .font(.subheadline)
                     .monospacedDigit()
                     .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            // A first scan of a large library is twenty minutes of sustained
+            // Vision work. Without a way out, the only way out is force-quitting
+            // — which is indistinguishable from an out-of-memory kill both to
+            // the user and, more importantly, to the diagnostics.
+            if coordinator.isScanning {
+                Button("Stop scanning") {
+                    coordinator.cancelScan()
+                }
+                .font(.subheadline.weight(.medium))
+                .tint(Theme.Colors.accent)
+                .padding(.top, Theme.Spacing.s)
             }
         }
     }

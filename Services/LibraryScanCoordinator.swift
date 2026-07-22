@@ -332,8 +332,22 @@ final class LibraryScanCoordinator {
         // is already free to clean up the fast categories.
         await runAnalysis()
 
+        // Cancelled runs are not failures and must not be filed as one. The
+        // checkpointed report already holds everything up to the stop.
+        if Task.isCancelled {
+            metrics.finishedAt = Date()
+            metrics.outcome = .cancelled
+            sampleMemory()
+            ScanMetricsStore.markScanCancelled()
+            ScanMetricsStore.save(metrics)
+            phase = .finished(stackCount: stacks.count)
+            startObserving()
+            return
+        }
+
         // The scan reached its end, so this launch is not the one that died.
         metrics.finishedAt = Date()
+        metrics.outcome = .completed
         sampleMemory()
         ScanMetricsStore.markScanFinished()
         ScanMetricsStore.save(metrics)
@@ -353,21 +367,43 @@ final class LibraryScanCoordinator {
         var enriched: [PhotoAsset] = []
         do {
             for await page in library.assetPages(scope: scope) {
+                // The page boundary is the cancellation point. Stopping here
+                // rather than mid-page means everything already analysed has
+                // been written to the cache, so a stopped scan is resumable
+                // work rather than discarded work — the next run picks up from
+                // the last completed page.
+                if Task.isCancelled { break }
+
                 scanTotal = page.totalCount
                 metrics.scopedAssetCount = page.totalCount
                 let (pageAssets, _) = try await process(page: page)
                 enriched.append(contentsOf: pageAssets)
-                analysedAssets = enriched
                 metrics.pagesProcessed += 1
                 // Once per page is the meaningful sampling point: peak footprint
                 // is reached while a page's images are in flight, and the page
                 // boundary is where everything should have been released again.
                 sampleMemory()
 
+                // Write the report as we go, so a run that never finishes still
+                // leaves its numbers. A jetsam kill gives the app no chance to
+                // run anything — no catch, no deinit — so anything not already
+                // persisted at the moment of death is lost. Throttled inside
+                // `checkpoint`; see the note there for the cost.
+                ScanMetricsStore.checkpoint(metrics)
+
                 // Re-derive often at the start (so something appears quickly),
                 // then periodically — re-clustering every page would grow costly
                 // as the working set builds up.
+                //
+                // `analysedAssets` is published HERE rather than every page, and
+                // that is a memory fix as much as a tidiness one. Assigning it
+                // per page aliased `enriched`'s buffer, so the next page's
+                // `append` found it non-uniquely referenced and reallocated —
+                // copying the whole accumulated array, with both copies resident
+                // at once. Quadratic over the scan, and it inflates the very
+                // peak-footprint number this run exists to measure.
                 if page.pageIndex < 3 || page.pageIndex % 5 == 0 || page.isLastPage {
+                    analysedAssets = enriched
                     stacks = buildStacks(from: analysedAssets)
                     refreshDerivedCategories()
                 }
@@ -375,9 +411,28 @@ final class LibraryScanCoordinator {
             }
         } catch {
             metrics.finishedAt = Date()
+            metrics.outcome = .failed
+            metrics.noteFailure(error.localizedDescription)
             ScanMetricsStore.markScanFinished()
             ScanMetricsStore.save(metrics)
             phase = .failed(error.localizedDescription)
+            return
+        }
+
+        // Stop means stop.
+        //
+        // Everything below is minutes of work on a large library, and the user
+        // pressed the button because the phone was hot. `measureTotalLibrarySize`
+        // is the worst of it: an UNSTRUCTURED task, so it does not inherit
+        // cancellation, and on a cold 20k library it walks `PHAssetResource`
+        // for every asset — roughly three minutes that nothing can then stop.
+        // Re-clustering twelve thousand assets is not free either.
+        //
+        // What has already been published stays published, and everything
+        // analysed is in the cache, so the partial result remains usable.
+        if Task.isCancelled {
+            analysedAssets = enriched
+            phase = .finished(stackCount: stacks.count)
             return
         }
 
@@ -395,6 +450,71 @@ final class LibraryScanCoordinator {
         analysedAssets = []
         stacks = []
         await scan()
+    }
+
+    /// The running scan, so it can be stopped.
+    ///
+    /// Callers used to write `Task { await coordinator.rescan(...) }` inline,
+    /// which meant nothing held the task and there was no way to stop a scan
+    /// once it began. On a small library that is invisible; on a
+    /// 20,000-photo one it is twenty minutes with no exit but force-quitting
+    /// the app — which leaves exactly the same trace as an out-of-memory kill
+    /// and so corrupts the one signal the diagnostics exist to produce.
+    private var scanTask: Task<Void, Never>?
+
+    /// Whether a scan is running and can be stopped.
+    var isScanning: Bool { scanTask != nil }
+
+    /// Distinguishes successive scans, so a finishing one cannot clean up after
+    /// a newer one. See `startRescan`.
+    private var scanGeneration = 0
+
+    /// Starts a scan in a task the coordinator owns. Replaces any in flight.
+    ///
+    /// The generation counter and the `await previous?.value` are not
+    /// belt-and-braces; without them, restarting a scan actively destroys the
+    /// thing this instrumentation exists to capture.
+    ///
+    /// Cancellation is cooperative and only observed at a page boundary, so an
+    /// outgoing scan keeps running for up to a page — around ten seconds on a
+    /// large library. In that window the naive version did three harmful
+    /// things: its `scanTask = nil` clobbered the *new* task's handle (so
+    /// `isScanning` went false and Stop became a no-op); its cancellation
+    /// branch stamped the new run's shared `metrics` as `.cancelled`; and,
+    /// worst, it called `markScanCancelled()`, clearing the in-flight marker
+    /// while the new scan was still going. If that scan were then killed for
+    /// memory, the next launch would report it as having finished cleanly —
+    /// losing the single most valuable bit in the whole diagnostics, in exactly
+    /// the scenario the 20,000-photo run exists to produce.
+    ///
+    /// Waiting for the old task to unwind before starting the new one costs a
+    /// few seconds of latency on a scope change and makes the whole class of
+    /// overlap impossible.
+    func startRescan(scope newScope: ScanScope) {
+        let previous = scanTask
+        previous?.cancel()
+
+        scanGeneration += 1
+        let generation = scanGeneration
+
+        scanTask = Task { [weak self] in
+            // Let the outgoing scan finish unwinding, so the two never share
+            // `metrics` or race on the in-flight marker.
+            _ = await previous?.value
+            guard let self, generation == scanGeneration else { return }
+            await rescan(scope: newScope)
+            // Only the current generation may clear the handle.
+            if generation == scanGeneration { scanTask = nil }
+        }
+    }
+
+    /// Stops the running scan at the next page boundary.
+    ///
+    /// Deliberately not instant: finishing the page in flight means its results
+    /// reach the cache, so stopping costs nothing already paid for. Everything
+    /// analysed so far is kept and the next scan resumes from there.
+    func cancelScan() {
+        scanTask?.cancel()
     }
 
     // MARK: - Incremental updates
@@ -1189,7 +1309,17 @@ final class LibraryScanCoordinator {
                 if pageResult.visionSeconds > 0 {
                     metrics.record(ScanMetrics.Phase.vision, seconds: pageResult.visionSeconds)
                 }
-                if scanProgress % memorySampleInterval == 0 { sampleMemory() }
+                if scanProgress % memorySampleInterval == 0 {
+                    sampleMemory()
+                    // Checkpoint here too, not only at the page boundary.
+                    // A jetsam kill happens AT peak footprint, which is
+                    // mid-page while images are in flight — so the sample
+                    // closest to the moment of death is precisely the one a
+                    // page-boundary-only write would lose. The 2s throttle
+                    // inside `checkpoint` bounds the cost regardless of how
+                    // often this is reached.
+                    ScanMetricsStore.checkpoint(metrics)
+                }
 
                 switch pageResult.outcome {
                 case let .analysed(result):

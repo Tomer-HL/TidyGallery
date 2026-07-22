@@ -420,6 +420,118 @@ struct ScanMetricsTests {
         #expect(ScanMetrics.duration(125) == "2m 5s")
     }
 
+    // MARK: How a run ended
+    //
+    // These three used to be two: a scan the user stopped and a scan iOS killed
+    // left identical traces. On a twenty-minute pass over a large library,
+    // abandoning it is the expected behaviour, not an edge case — so the
+    // conflation would have corrupted the interruption signal precisely when it
+    // finally started being exercised.
+
+    @Test("A fresh report is in-progress, not completed")
+    func freshReportIsInProgress() {
+        let metrics = ScanMetrics()
+        #expect(metrics.outcome == .inProgress)
+        #expect(metrics.isPartial)
+    }
+
+    @Test("Only a completed run is not partial")
+    func partialityFollowsOutcome() {
+        var metrics = ScanMetrics()
+
+        metrics.outcome = .completed
+        #expect(!metrics.isPartial)
+
+        metrics.outcome = .cancelled
+        #expect(metrics.isPartial)
+
+        metrics.outcome = .inProgress
+        #expect(metrics.isPartial)
+    }
+
+    @Test("A killed run reports as incomplete, not as stopped")
+    func killedRunReadsAsIncomplete() {
+        // What a jetsam kill leaves: a checkpointed report still marked
+        // in-progress, holding everything up to the moment of death.
+        var metrics = ScanMetrics()
+        metrics.startedAt = Date()
+        metrics.scopedAssetCount = 20_000
+        metrics.pagesProcessed = 60
+        metrics.cacheHits = 0
+        metrics.analysedFresh = 12_000
+        metrics.outcome = .inProgress
+
+        let report = metrics.report()
+        #expect(report.contains("INCOMPLETE"))
+        #expect(!report.contains("STOPPED BY USER"))
+        // The numbers are the finding — they must survive into the report.
+        #expect(report.contains("12000"))
+        #expect(report.contains("60"))
+    }
+
+    @Test("A stopped run is not reported as a failure")
+    func cancelledRunReadsAsDeliberate() {
+        var metrics = ScanMetrics()
+        let start = Date()
+        metrics.startedAt = start
+        metrics.finishedAt = start.addingTimeInterval(90)
+        metrics.analysedFresh = 4_000
+        metrics.outcome = .cancelled
+
+        let report = metrics.report()
+        #expect(report.contains("STOPPED BY USER"))
+        #expect(!report.contains("INCOMPLETE"))
+    }
+
+    @Test("A thrown scan is reported as failed, not as completed")
+    func failedRunIsNotReportedAsSuccess() {
+        // Before `.failed` existed, runAnalysis's catch left the outcome at
+        // .inProgress and scan() then stamped it .completed — so a scan that
+        // blew up saved a report claiming success while the UI said "failed".
+        var metrics = ScanMetrics()
+        metrics.startedAt = Date()
+        metrics.outcome = .failed
+        metrics.noteFailure("Vision request failed")
+
+        let report = metrics.report()
+        #expect(report.contains("FAILED"))
+        #expect(!report.contains("STOPPED BY USER"))
+        #expect(metrics.isPartial)
+        // The reason has to survive too, or "failed" is unactionable.
+        #expect(report.contains("Vision request failed"))
+    }
+
+    @Test("A completed run gets no qualifier at all")
+    func completedRunIsUnannotated() {
+        var metrics = ScanMetrics()
+        metrics.startedAt = Date()
+        metrics.outcome = .completed
+
+        let report = metrics.report()
+        #expect(!report.contains("INCOMPLETE"))
+        #expect(!report.contains("STOPPED BY USER"))
+        #expect(!report.contains("FAILED"))
+    }
+
+    @Test("Outcome survives a round trip, and old reports default to completed")
+    func outcomeEncodesAndMigrates() throws {
+        var metrics = ScanMetrics()
+        metrics.outcome = .cancelled
+        let restored = try JSONDecoder().decode(
+            ScanMetrics.self,
+            from: try JSONEncoder().encode(metrics)
+        )
+        #expect(restored.outcome == .cancelled)
+
+        // A report written before outcomes existed only ever reached `save` at
+        // the end of a finished scan, so treating it as completed is the
+        // accurate migration — not merely the convenient default.
+        let legacy = Data(#"{"scopedAssetCount": 212, "cacheHits": 208}"#.utf8)
+        let old = try JSONDecoder().decode(ScanMetrics.self, from: legacy)
+        #expect(old.outcome == .completed)
+        #expect(!old.isPartial)
+    }
+
     // MARK: Per-asset cost
 
     @Test("Assets seen accumulate alongside time, so per-asset cost is right")

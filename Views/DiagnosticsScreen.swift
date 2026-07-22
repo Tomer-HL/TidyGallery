@@ -32,8 +32,22 @@ struct DiagnosticsScreen: View {
                                     : coordinator.metrics
     }
 
+    /// The report from a run that was killed, set aside so this launch's scan
+    /// can't overwrite it. Shown alongside the current one rather than instead
+    /// of it: on a large library the interesting comparison is how far the dead
+    /// run got versus how far this one is getting.
+    private var interrupted: ScanMetrics? { ScanMetricsStore.loadInterrupted() }
+
+    /// Whether a scan is running *right now*.
+    ///
+    /// Was `startedAt != nil && finishedAt == nil`, which is also the exact
+    /// shape of a checkpointed report from a run that was killed — so the one
+    /// case this screen exists to explain was labelled "Scan in progress —
+    /// updating live" and its "terminated mid-run" notice could never appear.
+    /// Asking the coordinator whether it is actually scanning is both simpler
+    /// and true.
     private var isLive: Bool {
-        metrics.startedAt != nil && metrics.finishedAt == nil
+        coordinator.isScanning || coordinator.analysisProgress != nil
     }
 
     /// Failure messages, worst first. A named tuple rather than iterating the
@@ -104,6 +118,28 @@ struct DiagnosticsScreen: View {
                     .foregroundStyle(Theme.Colors.destructive)
             }
 
+            // The numbers from the run that died. Without these the warning is
+            // just an assertion that something went wrong; with them it says
+            // how far the app got and how little headroom was left when iOS
+            // stopped it, which is the actual finding.
+            if let dead = interrupted {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("That run reached:")
+                        .font(.footnote.weight(.semibold))
+                    Text("\(dead.processedCount) of \(dead.scopedAssetCount) photos · \(dead.pagesProcessed) pages")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    Text("peak \(ScanMetrics.bytes(dead.peakFootprintBytes))\(dead.minAvailableBytes.map { ", headroom down to \(ScanMetrics.bytes($0))" } ?? "")")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+
+                ShareLink(item: dead.report()) {
+                    Label("Share the interrupted run's report", systemImage: "square.and.arrow.up")
+                        .font(.footnote)
+                }
+            }
+
             Button("Clear this warning") {
                 ScanMetricsStore.clearInterruptionHistory()
             }
@@ -117,11 +153,52 @@ struct DiagnosticsScreen: View {
                 Label("Scan in progress — updating live", systemImage: "waveform")
                     .foregroundStyle(Theme.Colors.accent)
                     .font(.footnote)
+            } else {
+                outcomeLabel
             }
             row("Device", metrics.deviceSummary)
             row("Scope", metrics.scopeLabel)
             if let seconds = metrics.wallClockSeconds {
                 row("Wall clock", ScanMetrics.duration(seconds))
+            }
+        }
+    }
+
+    /// What this report is, before any of its numbers get read.
+    ///
+    /// A checkpointed report left in `.inProgress` by a scan that isn't running
+    /// any more is the fingerprint of a kill — and the figures it holds are the
+    /// most useful thing about it, since they say how far the app got before
+    /// iOS stopped it. Reading them as a completed run would understate every
+    /// total instead.
+    @ViewBuilder private var outcomeLabel: some View {
+        switch metrics.outcome {
+        case .completed:
+            EmptyView()
+        case .inProgress:
+            Label {
+                Text("Incomplete — this run did not reach its end. The figures below are how far it got.")
+                    .font(.footnote)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.Colors.destructive)
+            }
+        case .cancelled:
+            Label {
+                Text("You stopped this scan. The figures below cover only the part that ran.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            } icon: {
+                Image(systemName: "hand.raised.fill")
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+        case .failed:
+            Label {
+                Text("This scan failed. The app was running when it happened, so this is a bug to fix rather than a memory limit — see the failure reasons below.")
+                    .font(.footnote)
+            } icon: {
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(Theme.Colors.destructive)
             }
         }
     }

@@ -71,7 +71,7 @@ struct CleanupHomeView: View {
                         Section("Rescan") {
                             ForEach(ScanScope.allCases) { option in
                                 Button {
-                                    Task { await coordinator.rescan(scope: option) }
+                                    coordinator.startRescan(scope: option)
                                 } label: {
                                     if option == coordinator.scope {
                                         Label(option.label, systemImage: "checkmark")
@@ -154,9 +154,26 @@ struct CleanupHomeView: View {
                 if progress.total > 0 {
                     ProgressView(value: progress.fraction).tint(Theme.Colors.accent)
                 }
-                Text("Everything below is ready to use now.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.textSecondary)
+                HStack {
+                    Text("Everything below is ready to use now.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    Spacer()
+                    // The Stop control belongs HERE, not only on the scanning
+                    // screen. `scan()` publishes `.finished` before the Vision
+                    // pass begins — that's the whole point of the progressive
+                    // design, the home screen is usable while analysis runs —
+                    // so this banner, not the spinner, is what's on screen for
+                    // the twenty minutes a large library actually takes. A stop
+                    // button the user never sees stops nothing.
+                    if coordinator.isScanning {
+                        Button("Stop scanning") {
+                            coordinator.cancelScan()
+                        }
+                        .font(.caption.weight(.semibold))
+                        .tint(Theme.Colors.accent)
+                    }
+                }
             }
             .padding(Theme.Spacing.l)
             .frame(maxWidth: .infinity, alignment: .leading)

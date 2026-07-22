@@ -214,6 +214,35 @@ struct ScanMetrics: Sendable, Equatable, Codable {
     /// the fingerprint of the app being killed mid-scan (OOM or a crash).
     var previousScanDidNotFinish = false
 
+    /// How a run ended. Three outcomes that used to be two.
+    ///
+    /// "Didn't finish" was a single boolean, so a scan the user deliberately
+    /// stopped was indistinguishable from one iOS killed for memory. On a
+    /// twenty-minute pass over a large library that is not a rare edge case —
+    /// abandoning a scan is the expected thing to do when the phone gets hot,
+    /// and it would have poisoned the exact signal this instrumentation exists
+    /// to produce.
+    enum Outcome: String, Sendable, Codable {
+        /// Ran to completion.
+        case completed
+        /// Written while work is still in progress. A report left in this state
+        /// is what a jetsam kill looks like from the next launch.
+        case inProgress
+        /// The user stopped it. Not a failure, and not evidence of anything.
+        case cancelled
+        /// The scan threw. Distinct from a kill: the app was alive enough to
+        /// record it, so it is a bug to fix rather than a memory limit to
+        /// design around. Without this case a thrown scan was saved as
+        /// `.completed`, quietly claiming success on the report.
+        case failed
+    }
+
+    var outcome: Outcome = .inProgress
+
+    /// Whether this report captures a run that never reached its end — either
+    /// because it was killed, or because it is still going.
+    var isPartial: Bool { outcome != .completed }
+
     // MARK: - Recording
 
     /// Adds time to a phase, creating it on first use and preserving the order
@@ -442,6 +471,9 @@ extension ScanMetrics {
         memorySamples = try int(.memorySamples)
         previousScanDidNotFinish =
             try c.decodeIfPresent(Bool.self, forKey: .previousScanDidNotFinish) ?? false
+        // A report written by a build that predates outcomes reached `save`,
+        // and the only call site then was the end of a completed scan.
+        outcome = try c.decodeIfPresent(Outcome.self, forKey: .outcome) ?? .completed
     }
 }
 
@@ -468,6 +500,27 @@ extension ScanMetrics {
             lines.append("Wall clock: \(Self.duration(seconds))")
         } else if startedAt != nil {
             lines.append("Wall clock: still running")
+        }
+
+        // What this report IS, before any of its numbers are read. A partial
+        // report's figures are still meaningful — how far it got is the finding
+        // — but reading them as a completed run would understate every total.
+        switch outcome {
+        case .completed:
+            break
+        case .inProgress:
+            lines.append("")
+            lines.append("INCOMPLETE — this run did not reach its end.")
+            lines.append("If the app is not currently scanning, it was terminated")
+            lines.append("mid-run. The figures below are how far it got.")
+        case .cancelled:
+            lines.append("")
+            lines.append("STOPPED BY USER — not a failure. The figures below")
+            lines.append("cover only the part that ran.")
+        case .failed:
+            lines.append("")
+            lines.append("FAILED — the scan threw. The app was alive to record")
+            lines.append("this, so it is a bug, not a memory limit.")
         }
 
         if previousScanDidNotFinish {

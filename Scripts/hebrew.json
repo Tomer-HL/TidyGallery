@@ -180,5 +180,6 @@
   "of %@ scanned": "מתוך %@ שנסרקו",
   "Will keep suggesting %@": "נמשיך להציע %@",
   "Deleted %@ · won't suggest %@ again": "‏%1$@ נמחקו · לא נציע %2$@ שוב",
-  "Keep suggesting": "המשך להציע"
+  "Keep suggesting": "המשך להציע",
+  "Stop scanning": "עצור סריקה"
 }
