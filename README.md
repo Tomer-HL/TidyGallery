@@ -171,9 +171,18 @@ the same one either tool signs.
 
 ## Validating it at scale (the current step)
 
-The engine is feature-complete; what it has never been is *measured*. Run this
-before doing any more feature or polish work, because the result changes what's
-worth building next.
+The engine is feature-complete and, as of Phase 18–20, measured — but only on a
+212-photo library. Every projection here extrapolates from that. The paging
+design exists for 20,000 photos and has never met one.
+
+**Getting past that is what `docs/TESTFLIGHT.md` is for.** The cheapest route to
+real numbers isn't a synthetic harness — generated images are poor proxies for
+Vision cost, so they'd validate memory and not timing — it's putting the build in
+front of a few people with genuinely large libraries and reading the Diagnostics
+report they send back. The instrument already exists; it just needs pointing at
+something bigger than one phone.
+
+The steps below are the same measurement, run locally.
 
 1. Sideload the current build (see above) onto a phone with a real library.
 2. Settings → **Detection settings** is not what you want here — use menu →

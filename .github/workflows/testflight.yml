@@ -1,0 +1,164 @@
+name: TestFlight
+
+# Archives a SIGNED build and uploads it to App Store Connect, where it becomes
+# available to TestFlight testers.
+#
+# This is the sibling of `build-ipa.yml`. That one produces an unsigned .ipa you
+# sign yourself for sideloading; this one needs a real Apple Developer Program
+# membership and the four secrets listed below. Neither replaces the other —
+# sideloading stays the zero-cost path for testing on your own phone.
+#
+# Deliberately `workflow_dispatch` only. Uploading on every push to main would
+# burn build numbers, spam testers with builds nobody asked for, and make it
+# easy to ship something half-finished. Releasing should be a decision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      whats_new:
+        description: "What to Test notes for this build"
+        required: false
+        default: "Scan your library and send the Diagnostics report (menu → Diagnostics → Share report)."
+
+jobs:
+  testflight:
+    name: Archive, sign and upload
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail early and loudly on missing credentials.
+      #
+      # Without this the run gets as far as `xcodebuild archive`, fails with a
+      # signing error a hundred lines deep, and looks like a code problem. The
+      # actual cause — an unset repo secret — is a two-minute fix, but only once
+      # you know that's what it is.
+      - name: Check required secrets
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          missing=""
+          [ -z "$ASC_KEY_ID" ]      && missing="$missing ASC_KEY_ID"
+          [ -z "$ASC_ISSUER_ID" ]   && missing="$missing ASC_ISSUER_ID"
+          [ -z "$ASC_PRIVATE_KEY" ] && missing="$missing ASC_PRIVATE_KEY"
+          [ -z "$TEAM_ID" ]         && missing="$missing TEAM_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing"
+            echo "See docs/TESTFLIGHT.md for how to create them."
+            exit 1
+          fi
+          echo "All four secrets present."
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # The App Store Connect API key, as a file where xcodebuild expects it.
+      # `-authenticationKeyPath` needs an absolute path, and the private key is
+      # a multi-line PEM, which is why it's a secret rather than an input.
+      - name: Write App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_PRIVATE_KEY" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          chmod 600 ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Build number comes from `github.run_number`, passed straight to
+      # xcodebuild as CURRENT_PROJECT_VERSION in the archive step below.
+      #
+      # No `agvtool` step: this project generates its Info.plist
+      # (GENERATE_INFOPLIST_FILE), so there is no plist on disk for agvtool to
+      # rewrite, and a build setting on the command line is both simpler and
+      # authoritative. App Store Connect rejects a (version, build) pair it has
+      # seen before — and does so *after* the upload, several minutes in — so
+      # this needs to be reliably unique. `run_number` increases monotonically
+      # and needs no state kept anywhere.
+      - name: Archive (signed)
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project TidyGallery.xcodeproj \
+            -scheme TidyGallery \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/TidyGallery.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }}
+
+      - name: Write export options
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          cat > build/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>uploadSymbols</key><true/>
+            <key>destination</key><string>upload</string>
+          </dict>
+          </plist>
+          PLIST
+          cat build/ExportOptions.plist
+
+      # `destination: upload` in ExportOptions means this step both exports and
+      # uploads, so there's no separate altool/notarytool call.
+      - name: Export and upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild -exportArchive \
+            -archivePath build/TidyGallery.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -rf ~/private_keys
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### Uploaded to App Store Connect"
+            echo ""
+            echo "- Build number: **${{ github.run_number }}**"
+            echo "- Processing takes ~5–15 minutes before it reaches testers."
+            echo ""
+            echo "**What to Test:**"
+            echo ""
+            echo "> ${{ github.event.inputs.whats_new }}"
+            echo ""
+            echo "Paste that into App Store Connect → TestFlight → this build."
+          } >> "$GITHUB_STEP_SUMMARY"

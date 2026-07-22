@@ -64,6 +64,21 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
 
+        # Export compliance. Declared here rather than answered by hand in App
+        # Store Connect, because the hand-answered version is asked once per
+        # build and blocks the build from reaching testers until you notice.
+        #
+        # `false` is the accurate answer, not the convenient one: the app makes
+        # no network calls at all (no URLSession anywhere in the target), and
+        # uses no cryptography beyond what iOS itself applies to files at rest,
+        # which is exactly the exemption this key describes.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+
+        # Signing is left unset on purpose. CI supplies it per-workflow:
+        # `build-ipa` builds unsigned for sideloading, `testflight` signs with
+        # the App Store Connect API key. Hard-coding a team here would break the
+        # unsigned path and put an account id in a public repo.
+
   TidyGalleryTests:
     type: bundle.unit-test
     platform: iOS
