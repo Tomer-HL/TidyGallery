@@ -218,8 +218,13 @@ struct DiagnosticsScreen: View {
     /// The per-asset figure is the one that extrapolates to a large library.
     private func subtitle(for phase: PhaseTiming) -> String {
         let base = "\(phase.count)x · \(String(format: "%.1f", phase.averageMilliseconds)) ms avg"
-        guard let perAsset = phase.millisecondsPerAsset else { return base }
-        return base + " · \(phase.assetsSeen) assets, \(String(format: "%.2f", perAsset)) ms each"
+        if let perAsset = phase.millisecondsPerAsset {
+            return base + " · \(phase.assetsSeen) assets, \(String(format: "%.2f", perAsset)) ms each"
+        }
+        // Count without a rate: too few assets to separate the fixed cost of
+        // the query from the marginal cost per asset.
+        guard phase.assetsSeen > 0 else { return base }
+        return base + " · \(phase.assetsSeen) assets"
     }
 
     private var throughputSection: some View {
@@ -230,13 +235,39 @@ struct DiagnosticsScreen: View {
             if let perPhoto = metrics.millisecondsPerFreshPhoto {
                 row("Per fresh photo", String(format: "%.0f ms", perPhoto))
             }
-            if let projected = metrics.projectedSeconds(forFreshPhotos: 20_000) {
-                row("Projected: 20,000 photos", ScanMetrics.duration(projected))
+            if let factor = metrics.measuredConcurrencyFactor {
+                row("Concurrency achieved", String(format: "%.1fx", factor))
+            }
+            switch metrics.projection(forFreshPhotos: 20_000) {
+            case let .available(seconds):
+                row("Projected: 20,000 photos", ScanMetrics.duration(seconds))
+            case .tooFewSamples:
+                row("Projected: 20,000 photos", "too few photos")
+            case .notYet:
+                EmptyView()
             }
         } header: {
             Text("Throughput")
         } footer: {
-            Text("The projection extrapolates the per-photo cost measured here, at the concurrency actually achieved. It is a rough order of magnitude, not a promise.")
+            Text(projectionFooter)
+        }
+    }
+
+    /// Explains an absent projection rather than leaving a hole, since "no
+    /// number" and "a number I'm hiding from you" read very differently.
+    private var projectionFooter: String {
+        // Driven by the same value as the row above it, so the two can never
+        // give different explanations for the same missing number.
+        switch metrics.projection(forFreshPhotos: 20_000) {
+        case .available, .notYet:
+            return "The projection extrapolates the per-photo cost measured here, at the concurrency actually achieved. It is a rough order of magnitude, not a promise."
+        case let .tooFewSamples(fresh, needed):
+            return """
+            Only \(fresh) photo(s) were analysed fresh this run — fewer than the \(needed) needed \
+            to extrapolate, because a small batch can't fill the analysis pool and carries all of \
+            Vision's one-time startup cost. Rescan after adding photos, or clear the cache, for a \
+            projection worth reading.
+            """
         }
     }
 

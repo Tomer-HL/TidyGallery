@@ -56,9 +56,31 @@ struct PhaseTiming: Sendable, Equatable, Codable, Identifiable {
         count > 0 ? (totalSeconds / Double(count)) * 1000 : 0
     }
 
+    /// Fewest assets a phase must have walked before its per-asset cost is
+    /// reported.
+    ///
+    /// Below this, the figure cannot separate fixed cost from marginal cost,
+    /// and it is the marginal one that extrapolates. A device run made this
+    /// concrete:
+    ///
+    ///   Screenshots  107 ms over   2 assets → "53.38 ms each"
+    ///   Selfies      111 ms over  36 assets → "3.08 ms each"
+    ///   Big files     99 ms over 212 assets → "0.47 ms each"
+    ///
+    /// Read as a scaling rate, the first says 20,000 screenshots would take 18
+    /// minutes. In fact all three are the same ~100 ms fixed cost of opening a
+    /// smart album, and only the last has enough assets for the per-asset term
+    /// to dominate the constant. Showing nothing is better than showing a
+    /// number whose only honest reading requires already knowing this.
+    ///
+    /// The phase's total is always printed, so a small-sample phase that is
+    /// nonetheless expensive stays visible.
+    static let minimumAssetsForPerAssetCost = 30
+
     /// Cost per asset walked — the figure that extrapolates to a big library.
+    /// `nil` when too few assets were walked to tell fixed from marginal cost.
     var millisecondsPerAsset: Double? {
-        guard assetsSeen > 0 else { return nil }
+        guard assetsSeen >= Self.minimumAssetsForPerAssetCost else { return nil }
         return (totalSeconds / Double(assetsSeen)) * 1000
     }
 
@@ -280,23 +302,94 @@ struct ScanMetrics: Sendable, Equatable, Codable {
         return (sizeWalkSeconds / Double(sizesMeasured)) * 1000
     }
 
-    /// Projected wall clock for a library of `assetCount` photos, assuming none
-    /// are cached. Rough by construction — it extrapolates the per-photo cost
-    /// measured here — but it answers "will 20k photos take 4 minutes or 40?"
-    func projectedSeconds(forFreshPhotos assetCount: Int) -> Double? {
+    /// Fewest freshly-analysed photos a run must have before its per-photo cost
+    /// is allowed to be extrapolated.
+    ///
+    /// Not a round number picked for tidiness — it is the smallest sample that
+    /// can plausibly saturate the analysis pool AND amortise Vision's one-time
+    /// model load. Two device runs, same build, no Vision changes between them:
+    ///
+    ///   56 fresh photos → 231 ms each, concurrency 3.5× → projected 22 min
+    ///    4 fresh photos → 565 ms each, concurrency 1.9× → projected 97 min
+    ///
+    /// Four photos cannot fill a four-wide pool, so the measured concurrency
+    /// factor collapses toward 1; and the model warmup, negligible spread over
+    /// 56 photos, is a quarter of the cost when spread over 4. Both errors push
+    /// the same way, and the result was a confident 97-minute figure that was
+    /// wrong by more than 4×. A projection that only appears when it means
+    /// something is worth more than one that is always present.
+    static let minimumSampleForProjection = 25
+
+    /// How much parallelism the analysis pass actually achieved: serial cost
+    /// divided by elapsed time.
+    ///
+    /// Surfaced rather than left implicit inside the projection, because when
+    /// this collapses the projection inflates, and a reader who can't see it
+    /// has no way to tell a slow device from a small sample.
+    var measuredConcurrencyFactor: Double? {
         guard
             let perPhotoMs = millisecondsPerFreshPhoto,
             let seconds = wallClockSeconds,
-            seconds > 0,          // a zero wall clock would make the factor infinite
+            seconds > 0,
             analysedFresh > 0
         else { return nil }
+        let serialSeconds = (perPhotoMs / 1000) * Double(analysedFresh)
+        guard serialSeconds > 0 else { return nil }
+        return serialSeconds / seconds
+    }
+
+    /// Whether this run analysed enough photos for `projectedSeconds` to mean
+    /// anything. Exposed so the UI can explain the absence rather than just
+    /// showing a gap.
+    var hasEnoughSamplesToProject: Bool {
+        analysedFresh >= Self.minimumSampleForProjection
+    }
+
+    /// Why a projection is or isn't available.
+    ///
+    /// A bare `Double?` forced every caller to re-derive the reason from the
+    /// other properties, and they got it wrong in the same way: treating "no
+    /// projection" as always meaning "too small a sample". It also means
+    /// "hasn't finished yet", which during a live scan of a large library
+    /// produced the self-contradicting "only 5000 fresh photos, too few to
+    /// extrapolate from (needs 25)". One value, computed once, keeps the
+    /// text report and the Diagnostics screen from disagreeing.
+    enum Projection: Sendable, Equatable {
+        /// Seconds, extrapolated at the concurrency actually achieved.
+        case available(Double)
+        /// The run is valid but too small to extrapolate from.
+        case tooFewSamples(fresh: Int, needed: Int)
+        /// Still scanning, or nothing analysed fresh yet — ask again later.
+        case notYet
+    }
+
+    /// Projected wall clock for a library of `assetCount` photos, assuming none
+    /// are cached. Rough by construction — it extrapolates the per-photo cost
+    /// measured here — but it answers "will 20k photos take 4 minutes or 40?"
+    func projection(forFreshPhotos assetCount: Int) -> Projection {
+        guard analysedFresh > 0 else { return .notYet }
+        guard hasEnoughSamplesToProject else {
+            return .tooFewSamples(fresh: analysedFresh, needed: Self.minimumSampleForProjection)
+        }
+        // Missing timings or an unfinished scan — a real "not yet", distinct
+        // from a sample that will never be big enough.
+        guard
+            let perPhotoMs = millisecondsPerFreshPhoto,
+            let factor = measuredConcurrencyFactor,
+            factor > 0
+        else { return .notYet }
         // Analysis runs concurrently, so per-photo Vision+load time overstates
         // wall clock. Scale by the measured concurrency factor instead of
         // assuming the configured limit was actually achieved.
-        let serialSeconds = (perPhotoMs / 1000) * Double(analysedFresh)
-        let concurrencyFactor = serialSeconds > 0 ? serialSeconds / seconds : 1
-        guard concurrencyFactor > 0 else { return nil }
-        return (perPhotoMs / 1000) * Double(assetCount) / concurrencyFactor
+        return .available((perPhotoMs / 1000) * Double(assetCount) / factor)
+    }
+
+    /// The projection as a plain optional, for callers that only want the number.
+    func projectedSeconds(forFreshPhotos assetCount: Int) -> Double? {
+        guard case let .available(seconds) = projection(forFreshPhotos: assetCount) else {
+            return nil
+        }
+        return seconds
     }
 
     /// Nothing has been recorded yet.
@@ -435,6 +528,10 @@ extension ScanMetrics {
                 var line = "  \(name)  \(total)  (\(phase.count)x, \(average))"
                 if let perAsset = phase.millisecondsPerAsset {
                     line += String(format: "  [%d assets, %.2f ms each]", phase.assetsSeen, perAsset)
+                } else if phase.assetsSeen > 0 {
+                    // Count but no rate: too small a sample to tell the fixed
+                    // cost of the query from the marginal cost per asset.
+                    line += String(format: "  [%d assets]", phase.assetsSeen)
                 }
                 lines.append(line)
             }
@@ -448,8 +545,17 @@ extension ScanMetrics {
         if let perPhoto = millisecondsPerFreshPhoto {
             lines.append("  " + String(format: "%.0f ms per fresh photo (serial cost)", perPhoto))
         }
-        if let projected = projectedSeconds(forFreshPhotos: 20_000) {
-            lines.append("  Projected for 20,000 uncached photos: \(Self.duration(projected))")
+        if let factor = measuredConcurrencyFactor {
+            lines.append("  " + String(format: "%.1fx concurrency achieved", factor))
+        }
+        switch projection(forFreshPhotos: 20_000) {
+        case let .available(seconds):
+            lines.append("  Projected for 20,000 uncached photos: \(Self.duration(seconds))")
+        case let .tooFewSamples(fresh, needed):
+            lines.append("  Projected for 20,000: not shown — only \(fresh) photo(s)")
+            lines.append("  analysed fresh, too few to extrapolate from (needs \(needed)).")
+        case .notYet:
+            break   // nothing analysed fresh yet, or the scan is still running
         }
 
         return lines.joined(separator: "\n")

@@ -202,6 +202,144 @@ struct ScanMetricsTests {
         let projected = metrics.projectedSeconds(forFreshPhotos: 20_000)
         #expect(projected != nil)
         #expect(abs((projected ?? 0) - 500) < 1)
+        #expect(abs((metrics.measuredConcurrencyFactor ?? 0) - 4) < 0.01)
+    }
+
+    // MARK: The projection guard
+    //
+    // Two real device runs, same build, no Vision changes between them. The
+    // projection swung from 22 minutes to 97 purely on sample size. These pin
+    // both, so the guard can't silently regress into confident nonsense again.
+
+    /// The trustworthy run: 56 fresh photos, 942 ms image load, 12.0 s Vision,
+    /// 3.7 s wall clock.
+    private func healthySampleRun() -> ScanMetrics {
+        var metrics = ScanMetrics()
+        let start = Date()
+        metrics.startedAt = start
+        metrics.finishedAt = start.addingTimeInterval(3.7)
+        metrics.cacheHits = 156
+        metrics.analysedFresh = 56
+        metrics.record(ScanMetrics.Phase.imageLoad, seconds: 0.942, count: 56)
+        metrics.record(ScanMetrics.Phase.vision, seconds: 12.0, count: 56)
+        return metrics
+    }
+
+    /// The misleading run: only 4 fresh photos, 261 ms image load, 2.0 s Vision,
+    /// 1.2 s wall clock. Same device, same code.
+    private func tinySampleRun() -> ScanMetrics {
+        var metrics = ScanMetrics()
+        let start = Date()
+        metrics.startedAt = start
+        metrics.finishedAt = start.addingTimeInterval(1.2)
+        metrics.cacheHits = 208
+        metrics.analysedFresh = 4
+        metrics.record(ScanMetrics.Phase.imageLoad, seconds: 0.261, count: 4)
+        metrics.record(ScanMetrics.Phase.vision, seconds: 2.0, count: 4)
+        return metrics
+    }
+
+    @Test("A four-photo sample produces no projection at all")
+    func tinySampleIsNotProjected() {
+        let metrics = tinySampleRun()
+
+        #expect(!metrics.hasEnoughSamplesToProject)
+        #expect(metrics.projectedSeconds(forFreshPhotos: 20_000) == nil)
+        // The per-photo cost is still reported — it's a measurement. Only the
+        // extrapolation is withheld.
+        #expect(metrics.millisecondsPerFreshPhoto != nil)
+    }
+
+    @Test("A 56-photo sample still projects, and near the figure the device gave")
+    func healthySampleStillProjects() {
+        let metrics = healthySampleRun()
+
+        #expect(metrics.hasEnoughSamplesToProject)
+        let projected = metrics.projectedSeconds(forFreshPhotos: 20_000)
+        #expect(projected != nil)
+        // The device reported 21m56s; allow a minute of arithmetic drift.
+        #expect(abs((projected ?? 0) - 1_316) < 60)
+    }
+
+    @Test("The concurrency factor is what collapsed, and it is now visible")
+    func concurrencyFactorExplainsTheSwing() {
+        // 4 photos can't fill a 4-wide pool; 56 nearly can. Surfacing this is
+        // what lets a reader tell a small sample from a slow device — the two
+        // are indistinguishable from the projection alone.
+        let tiny = tinySampleRun().measuredConcurrencyFactor ?? 0
+        let healthy = healthySampleRun().measuredConcurrencyFactor ?? 0
+
+        #expect(tiny < 2.0)
+        #expect(healthy > 3.0)
+        #expect(healthy > tiny)
+    }
+
+    @Test("The report explains a withheld projection instead of leaving a hole")
+    func reportExplainsWithheldProjection() {
+        let report = tinySampleRun().report()
+
+        #expect(!report.contains("Projected for 20,000 uncached photos:"))
+        #expect(report.contains("too few to extrapolate"))
+        #expect(report.contains("concurrency achieved"))
+    }
+
+    @Test("A still-running scan of a big library is 'not yet', not 'too few'")
+    func liveScanIsNotBlamedOnSampleSize() {
+        // The bug this replaced: `projectedSeconds` returns nil for THREE
+        // reasons, and the fallback text assumed only one of them. Mid-scan
+        // there is no `finishedAt`, so a run that had already analysed 5,000
+        // photos was told it had "too few to extrapolate from (needs 25)".
+        var metrics = ScanMetrics()
+        metrics.startedAt = Date()          // no finishedAt — still scanning
+        metrics.analysedFresh = 5_000
+        metrics.record(ScanMetrics.Phase.imageLoad, seconds: 40, count: 5_000)
+        metrics.record(ScanMetrics.Phase.vision, seconds: 60, count: 5_000)
+
+        #expect(metrics.projection(forFreshPhotos: 20_000) == .notYet)
+        #expect(metrics.hasEnoughSamplesToProject)   // the sample is fine
+
+        let report = metrics.report()
+        #expect(!report.contains("too few to extrapolate"))
+        #expect(report.contains("still running"))
+    }
+
+    @Test("Nothing analysed fresh yet is also 'not yet'")
+    func fullyCachedScanIsNotYet() {
+        var metrics = ScanMetrics()
+        let start = Date()
+        metrics.startedAt = start
+        metrics.finishedAt = start.addingTimeInterval(1.3)
+        metrics.cacheHits = 199
+        metrics.analysedFresh = 0
+
+        #expect(metrics.projection(forFreshPhotos: 20_000) == .notYet)
+        // A 100%-cached scan is a success, not a measurement failure — it must
+        // not be nagged about sample size.
+        #expect(!metrics.report().contains("too few to extrapolate"))
+    }
+
+    @Test("The reasoned projection and the plain optional agree")
+    func projectionAndOptionalAgree() {
+        let healthy = healthySampleRun()
+        let tiny = tinySampleRun()
+
+        #expect(healthy.projectedSeconds(forFreshPhotos: 20_000) != nil)
+        if case .available = healthy.projection(forFreshPhotos: 20_000) {} else {
+            Issue.record("healthy run should project")
+        }
+        #expect(tiny.projectedSeconds(forFreshPhotos: 20_000) == nil)
+        #expect(tiny.projection(forFreshPhotos: 20_000) == .tooFewSamples(fresh: 4, needed: 25))
+    }
+
+    @Test("Right at the threshold the projection appears")
+    func projectionThresholdBoundary() {
+        var metrics = healthySampleRun()
+
+        metrics.analysedFresh = ScanMetrics.minimumSampleForProjection - 1
+        #expect(metrics.projectedSeconds(forFreshPhotos: 20_000) == nil)
+
+        metrics.analysedFresh = ScanMetrics.minimumSampleForProjection
+        #expect(metrics.projectedSeconds(forFreshPhotos: 20_000) != nil)
     }
 
     // MARK: Report
@@ -287,11 +425,11 @@ struct ScanMetricsTests {
     @Test("Assets seen accumulate alongside time, so per-asset cost is right")
     func assetsSeenAccumulate() {
         var metrics = ScanMetrics()
-        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.1, assetsSeen: 10)
-        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.1, assetsSeen: 10)
+        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.5, assetsSeen: 50)
+        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.5, assetsSeen: 50)
 
         let phase = metrics.phases[0]
-        #expect(phase.assetsSeen == 20)
+        #expect(phase.assetsSeen == 100)
         #expect(abs((phase.millisecondsPerAsset ?? 0) - 10.0) < 0.0001)
     }
 
@@ -304,6 +442,46 @@ struct ScanMetricsTests {
 
         #expect(metrics.phases[0].assetsSeen == 0)
         #expect(metrics.phases[0].millisecondsPerAsset == nil)
+    }
+
+    @Test("A tiny asset sample reports no per-asset rate — it can't tell fixed from marginal")
+    func perAssetCostNeedsEnoughAssets() {
+        var metrics = ScanMetrics()
+        // The real numbers: opening the Screenshots smart album cost 107 ms and
+        // found 2 photos. Divided out that reads "53 ms each", which would
+        // project 20,000 screenshots at 18 minutes. It is actually ~100 ms of
+        // fixed query cost that does not scale at all.
+        metrics.record(ScanMetrics.Phase.screenshotFetch, seconds: 0.107, assetsSeen: 2)
+
+        let phase = metrics.phases[0]
+        #expect(phase.assetsSeen == 2)
+        #expect(phase.millisecondsPerAsset == nil)
+        // The total must still be visible — a cheap-looking rate is the danger,
+        // not the phase itself.
+        #expect(abs(phase.totalSeconds - 0.107) < 0.0001)
+    }
+
+    @Test("A large enough sample does report a per-asset rate")
+    func perAssetCostAppearsAtScale() {
+        var metrics = ScanMetrics()
+        // Same run, the phase that genuinely does scale: 212 assets in 99 ms.
+        metrics.record(ScanMetrics.Phase.bigFileCandidates, seconds: 0.099, assetsSeen: 212)
+
+        #expect(abs((metrics.phases[0].millisecondsPerAsset ?? 0) - 0.467) < 0.001)
+    }
+
+    @Test("The threshold is what separates those two readings")
+    func perAssetThresholdBoundary() {
+        let below = PhaseTiming(
+            name: "x", totalSeconds: 1,
+            count: 1, assetsSeen: PhaseTiming.minimumAssetsForPerAssetCost - 1
+        )
+        let at = PhaseTiming(
+            name: "x", totalSeconds: 1,
+            count: 1, assetsSeen: PhaseTiming.minimumAssetsForPerAssetCost
+        )
+        #expect(below.millisecondsPerAsset == nil)
+        #expect(at.millisecondsPerAsset != nil)
     }
 
     @Test("Per-asset cost is what distinguishes a slow call from a wide query")
