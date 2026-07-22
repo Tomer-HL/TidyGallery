@@ -325,7 +325,13 @@ struct CleanupHomeView: View {
                     category: .recommended,
                     assets: recommended,
                     initiallySelected: Set(recommended.map(\.id)),
-                    onDeleted: { coordinator.noteDeleted(ids: $0) }
+                    onDeleted: { coordinator.noteDeleted(ids: $0) },
+                    // Passing `onIgnore` is what reveals the "Keep — don't
+                    // suggest again" button. Omitting it left the two screens
+                    // that open FULLY pre-checked as the only ones with no way
+                    // to say "keep these" — the exact screens that most need
+                    // one, since they arrive armed rather than empty.
+                    onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } }
                 )
             } label: {
                 HStack(spacing: Theme.Spacing.s) {
@@ -407,7 +413,14 @@ struct CleanupHomeView: View {
                 category: .exactDuplicates,
                 assets: extras,
                 initiallySelected: Set(extras.map(\.id)),
-                onDeleted: { coordinator.noteDeleted(ids: $0) }
+                onDeleted: { coordinator.noteDeleted(ids: $0) },
+                // See `recommendedButton`. Doubly worth having here: "exact"
+                // duplicates are found by bucketing on (width, height, total
+                // bytes) and confirming with a feature-print distance under
+                // 0.02 — very strong evidence, but a heuristic, not a byte
+                // comparison. A heuristic that pre-checks everything should
+                // offer a way to disagree with it.
+                onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } }
             )
         }
     }

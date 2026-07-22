@@ -242,6 +242,25 @@ final class PhotoLibraryService: @unchecked Sendable {
         return result
     }
 
+    /// Stills from a library-change delta, snapshotted **off the main actor**.
+    ///
+    /// `snapshots(for:)` above is deliberately synchronous, on the stated
+    /// assumption that it is "only ever called with the ignore list or a change
+    /// delta, both small and bounded". The second half of that stopped being
+    /// true when the change observer's baseline widened from `.image` to every
+    /// media type: an iCloud sync or a storage-optimisation pass can mark
+    /// thousands of assets changed at once, and a synchronous `nonisolated`
+    /// function called from `@MainActor` still runs on the main actor (SE-0338).
+    /// That would be a fetch plus a full enumeration blocking the UI.
+    ///
+    /// `async` is the whole point of this variant, exactly as documented at the
+    /// top of this file — a nonisolated ASYNC function is the only form
+    /// guaranteed to run on the cooperative pool. Dropping the keyword would
+    /// silently put it back on the main thread with no diagnostic.
+    func changedSnapshots(for identifiers: [String]) async -> [PhotoAsset] {
+        snapshots(for: identifiers, imagesOnly: true)
+    }
+
     /// A category fetch plus what it cost.
     ///
     /// The four metadata fetches run concurrently, so the coordinator cannot

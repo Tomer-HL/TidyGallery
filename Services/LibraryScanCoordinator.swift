@@ -416,68 +416,120 @@ final class LibraryScanCoordinator {
     /// set, (re)analyse only the changed/inserted ones, then re-cluster. The
     /// heavy full-library scan is never repeated.
     private func apply(_ change: LibraryChange) async {
+        // Did anything happen that the published lists actually depend on?
+        //
+        // This gate exists because the observer's baseline was just widened from
+        // `.image` to every media type — necessary, so that deleting a video is
+        // noticed and its cache rows are purged. The cost of that is a callback
+        // for events that previously produced nothing: iCloud syncing videos,
+        // "Optimize Storage" evicting or restoring originals, Photos
+        // regenerating thumbnails. Each of those marks assets *changed*, not
+        // removed.
+        //
+        // `scheduleRecompute()` is debounced but not rate-limited, so a change
+        // arriving every second or so yields one full `refreshCategories()`
+        // each time — re-enumerating every video with a `PHAssetResource` call
+        // apiece, re-walking all stills for big-file candidates, and
+        // re-measuring sizes. Widening what we *listen* to must not widen what
+        // we *react* to.
+        var isRelevant = false
+
         // Removals.
         if !change.removedIdentifiers.isEmpty {
             try? await cache.purge(ids: change.removedIdentifiers)
             // Sizes live in their own store, so they need their own purge —
             // otherwise every photo the user deletes leaves a row behind and the
-            // cache grows without bound over the app's lifetime.
+            // cache grows without bound over the app's lifetime. Deliberately
+            // NOT filtered by media type: the size cache DOES hold video rows
+            // (`libraryFileSizes` measures every media type), and purging those
+            // is precisely what widening the baseline bought.
             try? await sizeCache?.purge(ids: change.removedIdentifiers)
             let removed = Set(change.removedIdentifiers)
             analysedAssets.removeAll { removed.contains($0.id) }
+            isRelevant = true   // a deletion always changes what the lists show
         }
 
         // Insertions / modifications.
         if !change.changedIdentifiers.isEmpty {
-            let snapshots = library.snapshots(for: change.changedIdentifiers)
-            let keys = snapshots.map { (id: $0.id, modificationDate: $0.modificationDate) }
-            let cached = (try? await cache.freshAnalysis(for: keys)) ?? [:]
-
-            var updated: [PhotoAsset] = []
-            for var asset in snapshots {
-                if let hit = cached[asset.id] {
-                    asset.featurePrint = hit.featurePrint
-                    asset.score = hit.score
-                    asset.sceneTags = hit.sceneTags
-                    asset.classificationLabels = hit.labels
-                } else {
-                    let imageResult = await library.analysisImage(
-                        for: asset.id,
-                        targetSize: config.analysisImageSize,
-                        allowNetwork: tuning.analyseICloudPhotos
-                    )
-                    if case let .image(cgImage) = imageResult,
-                       let result = try? await analyzer.analyze(
-                           image: cgImage,
-                           isFavorite: asset.isFavorite
-                       ) {
-                        asset.featurePrint = result.featurePrint
-                        asset.score = result.score
-                        asset.sceneTags = result.sceneTags
-                        asset.classificationLabels = result.labels
-                        try? await cache.store(
-                            id: asset.id,
-                            modificationDate: asset.modificationDate,
-                            featurePrint: result.featurePrint,
-                            score: result.score,
-                            sceneTags: result.sceneTags,
-                            labels: result.labels
-                        )
-                    }
-                }
-                if asset.isAnalysed { updated.append(asset) }
-            }
-
-            // Replace existing entries and add new ones.
-            let updatedIDs = Set(updated.map(\.id))
-            analysedAssets.removeAll { updatedIDs.contains($0.id) }
-            analysedAssets.append(contentsOf: updated)
+            let didUpdate = await reanalyse(change.changedIdentifiers)
+            isRelevant = isRelevant || didUpdate
         }
+
+        // Nothing we publish depends on this change — most likely videos being
+        // synced or evicted. Cache purges above have already happened; skip the
+        // expensive part. See the note at the top of this method.
+        guard isRelevant else { return }
 
         // Coalesce the expensive re-cluster + full category re-fetch. Cheap
         // bookkeeping above (cache purge, working-set delta) has already run;
         // the heavy pass is debounced so a burst of changes triggers it once.
         scheduleRecompute()
+    }
+
+    /// Re-analyses changed or inserted **stills**, folding the results into the
+    /// working set.
+    ///
+    /// Stills only, and that filter is now load-bearing rather than incidental.
+    /// The observer baselines on every media type so that deleting a video is
+    /// noticed and its size-cache row purged. But `assetPages` — the full scan —
+    /// enumerates `.image`, so `analysedAssets` has always been stills. A video
+    /// reaching here would have its poster frame analysed and then be fed into
+    /// clustering, blurry-singles and the scene categories, which the full scan
+    /// would never do: the delta path and the scan path would end up disagreeing
+    /// about what the library contains.
+    ///
+    /// - Returns: `false` when the delta held nothing we track (a video-only
+    ///   change), so the caller can skip the expensive recompute.
+    private func reanalyse(_ identifiers: [PhotoAsset.ID]) async -> Bool {
+        let snapshots = await library.changedSnapshots(for: identifiers)
+        // Also avoids querying the cache with an empty set: `freshAnalysis` has
+        // no empty-input early return, so empty keys would build a `#Predicate`
+        // over an empty array and hit SwiftData for nothing.
+        guard !snapshots.isEmpty else { return false }
+
+        let keys = snapshots.map { (id: $0.id, modificationDate: $0.modificationDate) }
+        let cached = (try? await cache.freshAnalysis(for: keys)) ?? [:]
+
+        var updated: [PhotoAsset] = []
+        for var asset in snapshots {
+            if let hit = cached[asset.id] {
+                asset.featurePrint = hit.featurePrint
+                asset.score = hit.score
+                asset.sceneTags = hit.sceneTags
+                asset.classificationLabels = hit.labels
+            } else {
+                let imageResult = await library.analysisImage(
+                    for: asset.id,
+                    targetSize: config.analysisImageSize,
+                    allowNetwork: tuning.analyseICloudPhotos
+                )
+                if case let .image(cgImage) = imageResult,
+                   let result = try? await analyzer.analyze(
+                       image: cgImage,
+                       isFavorite: asset.isFavorite
+                   ) {
+                    asset.featurePrint = result.featurePrint
+                    asset.score = result.score
+                    asset.sceneTags = result.sceneTags
+                    asset.classificationLabels = result.labels
+                    try? await cache.store(
+                        id: asset.id,
+                        modificationDate: asset.modificationDate,
+                        featurePrint: result.featurePrint,
+                        score: result.score,
+                        sceneTags: result.sceneTags,
+                        labels: result.labels
+                    )
+                }
+            }
+            if asset.isAnalysed { updated.append(asset) }
+        }
+
+        // Replace existing entries and add new ones.
+        let updatedIDs = Set(updated.map(\.id))
+        analysedAssets.removeAll { updatedIDs.contains($0.id) }
+        analysedAssets.append(contentsOf: updated)
+        return true
     }
 
     // MARK: - Cleanup categories
@@ -740,6 +792,16 @@ final class LibraryScanCoordinator {
         summaryTask = Task { [weak self, library] in
             let measurement = await library.fileSizes(for: Array(input.unionIDs))
             guard !Task.isCancelled else { return }
+            // Belt-and-braces, and currently redundant: `isComplete` is only
+            // false when `measure` saw `Task.isCancelled`, which the guard above
+            // has already caught — cancellation is monotonic and `fileSizes` is
+            // awaited directly in this task, not a child. Kept for the same
+            // reason `PhotoStack.init` re-strips the best shot: it costs a
+            // branch, it makes the rule local instead of inferred from two
+            // places, and if the cancellation guard above is ever moved or
+            // dropped this still prevents a truncated map from silently
+            // understating reclaimable space.
+            guard measurement.isComplete else { return }
             self?.storageSummary = StorageSummaryBuilder.build(input, sizes: measurement.sizes)
         }
     }
@@ -864,6 +926,23 @@ final class LibraryScanCoordinator {
         recommendedAssets = recommendedDeletions()
         refreshStorageSummary()
         phase = .finished(stackCount: stacks.count)
+
+        // Purge the caches too, rather than trusting the change observer to
+        // tell us about a deletion we performed ourselves.
+        //
+        // This method reconciles the in-memory lists synchronously so the UI
+        // updates immediately; the cache rows were left to `apply(_:)`. That is
+        // a real dependency on the observer firing, being registered at the
+        // time, and its baseline covering the asset — three things that have
+        // each been false at some point (videos were outside the baseline until
+        // just now, and `startObserving` only runs after a completed scan).
+        // Rows for assets we know are gone should not survive on a technicality.
+        // Purging twice is harmless: both stores delete by id and no-op on rows
+        // that aren't there.
+        Task { [cache, sizeCache] in
+            try? await cache.purge(ids: ids)
+            try? await sizeCache?.purge(ids: ids)
+        }
     }
 
     // MARK: - Retuning
