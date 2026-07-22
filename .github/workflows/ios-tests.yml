@@ -61,6 +61,37 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
 
+      # Everything above proves the translations are complete and consistent.
+      # None of it proves they reach the app: XcodeGen has to turn the .lproj
+      # directories into variant groups and Xcode has to copy them into the
+      # bundle, and if either doesn't happen the app runs in English with no
+      # error anywhere. iOS also only offers a per-app Language setting when it
+      # can see more than one .lproj inside the built product — so if this step
+      # fails, that setting won't appear on the device either.
+      - name: Verify localizations reached the built app bundle
+        if: always()
+        run: |
+          APP="$(find ~/Library/Developer/Xcode/DerivedData -type d -name 'TidyGallery.app' -path '*Debug-iphonesimulator*' | head -1)"
+          if [ -z "$APP" ]; then echo "::error::No built TidyGallery.app found"; exit 1; fi
+          echo "Inspecting $APP"
+          ls -la "$APP" | grep -i lproj || true
+          MISSING=0
+          for LANG in en he; do
+            if [ ! -f "$APP/$LANG.lproj/Localizable.strings" ]; then
+              echo "::error::$LANG.lproj/Localizable.strings is missing from the app bundle"
+              MISSING=1
+            fi
+            if [ ! -f "$APP/$LANG.lproj/Localizable.stringsdict" ]; then
+              echo "::error::$LANG.lproj/Localizable.stringsdict is missing from the app bundle"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" = "1" ]; then
+            echo "The app would silently run in English only. Check the Resources/ entry in project.yml."
+            exit 1
+          fi
+          echo "Both localizations are present in the bundle."
+
       - name: Upload test results
         if: always()   # keep the bundle even when tests fail, for debugging
         uses: actions/upload-artifact@v4

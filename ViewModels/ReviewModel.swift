@@ -132,6 +132,22 @@ final class ReviewModel {
         stacks.removeAll { $0.id == stackID }
     }
 
+    /// The photos that will REMAIN in every stack this deletion touches — the
+    /// ones the user chose to keep by not checking them.
+    ///
+    /// Stacks the deletion doesn't touch are excluded: leaving a group alone is
+    /// not a decision about it, and shouldn't be recorded as one.
+    ///
+    /// Must be called **before** `removeDeleted(_:)`, which mutates `stacks`.
+    func survivors(ofStacksAffectedBy deletedIDs: [PhotoAsset.ID]) -> [PhotoAsset.ID] {
+        let removed = Set(deletedIDs)
+        return stacks.flatMap { stack -> [PhotoAsset.ID] in
+            let ids = stack.assets.map(\.id)
+            guard ids.contains(where: { removed.contains($0) }) else { return [] }
+            return ids.filter { !removed.contains($0) }
+        }
+    }
+
     // MARK: - Post-deletion
 
     /// After a successful deletion, drop the removed assets. Stacks that fall to

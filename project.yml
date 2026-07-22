@@ -14,12 +14,12 @@ options:
   # with he.lproj present in the bundle.
   developmentLanguage: en
 
-# Languages the app ships. XcodeGen needs these to build the variant groups for
-# the .lproj folders under Resources/.
-knownRegions:
-  - en
-  - he
-  - Base
+# Note: there is deliberately no `knownRegions` key here. It isn't part of
+# XcodeGen's project spec (an earlier version of this file had one, where it was
+# silently ignored) — XcodeGen derives the project's known regions from the
+# .lproj directories it finds while building variant groups. The languages the
+# app ships are therefore decided by what exists under Resources/, and the
+# `ios-tests` workflow asserts both of them actually land in the built bundle.
 
 # Applied to every target. Swift 6 language mode turns on complete strict
 # concurrency checking — the whole codebase is written to pass it.

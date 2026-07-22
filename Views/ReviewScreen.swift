@@ -203,17 +203,19 @@ struct ReviewScreen: View {
 
     // MARK: Never-suggest action
 
-    /// Record every photo in a group as "never suggest again", then drop the
-    /// group from this screen.
+    /// "I'm keeping this entire group — stop asking about it."
     ///
-    /// The banner is not decoration. The original failure here was invisible —
-    /// the user kept photos, nothing was written, and there was no way to tell
-    /// from the screen. A durable decision has to say so out loud.
+    /// The deletion checks are cleared *first*, deliberately. Without that, this
+    /// action would add photos the user had queued for deletion to the list of
+    /// photos they want to keep — two opposite intentions applied to the same
+    /// photo in one tap. Clearing first makes the button mean exactly one thing:
+    /// nothing here is being deleted, and none of it should come back.
     private func neverSuggest(_ stack: ReviewModel.Stack) {
         guard let onIgnore else { return }
         let ids = stack.assets.map(\.id)
         guard !ids.isEmpty else { return }
 
+        model.clearChecks(inStack: stack.id)
         onIgnore(ids)
         model.removeStack(stack.id)
         Task {
@@ -236,9 +238,37 @@ struct ReviewScreen: View {
         do {
             let confirmed = try await library.deleteAssets(withIdentifiers: ids)
             guard confirmed else { return }   // user cancelled the system sheet
+
+            // Read the survivors BEFORE `removeDeleted` mutates the stacks.
+            //
+            // Choosing which photos to delete from a group is also, implicitly,
+            // choosing which to keep — and that second half of the decision used
+            // to be thrown away. Recording it here means a photo you kept out of
+            // a burst is never offered up again, without you having to say so
+            // twice. Only groups this deletion actually touched count: leaving a
+            // group alone isn't a decision about it.
+            let survivors = model.survivors(ofStacksAffectedBy: ids)
+
             model.removeDeleted(ids)
             onDeleted(ids)   // reconcile home counts + other categories at once
-            await flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(ids.count))"))
+
+            if !survivors.isEmpty, let onIgnore {
+                onIgnore(survivors)
+                // Both counts are interpolated inline rather than via local
+                // bindings, and the literal is single-line. Both are constraints
+                // of the localization coverage check in
+                // Scripts/build_localizations.py: it can't see inside a
+                // multi-line (`"""`) literal, and it infers %@ vs %lld from the
+                // interpolated expression's text — so hiding `counted(...)`
+                // behind a `let` makes it guess `%lld` for what is really a
+                // string, and the key it demands stops matching the one the app
+                // looks up.
+                await flashBanner(
+                    String(localized: "Deleted \(ItemNoun.photo.counted(ids.count)) · kept \(ItemNoun.photo.counted(survivors.count))")
+                )
+            } else {
+                await flashBanner(String(localized: "Deleted \(ItemNoun.photo.counted(ids.count))"))
+            }
         } catch {
             await flashBanner("Couldn't delete: \(error.localizedDescription)")
         }

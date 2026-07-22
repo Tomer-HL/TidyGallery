@@ -132,26 +132,67 @@ struct IgnoreFlowTests {
         #expect(model.stacks[0].checkedForDeletion.isEmpty)
     }
 
-    // MARK: Every stack photo is offered, not just the extras
+    // MARK: Deciding what to delete is also deciding what to keep
 
-    @Test("Keeping a group covers the best shot too")
-    func neverSuggestCoversWholeGroup() {
-        let assets = [
-            PhotoAsset.make(id: "best"),
-            PhotoAsset.make(id: "extra1"),
-            PhotoAsset.make(id: "extra2"),
-        ]
-        let stack = PhotoStack(
-            assets: assets,
+    private func threePhotoStack() -> PhotoStack {
+        PhotoStack(
+            assets: [
+                PhotoAsset.make(id: "best"),
+                PhotoAsset.make(id: "extra1"),
+                PhotoAsset.make(id: "extra2"),
+            ],
             bestShotID: "best",
             rankedAssetIDs: ["best", "extra1", "extra2"],
             assetsPreselectedForDeletion: ["extra1", "extra2"]
         )
+    }
 
-        // "Never suggest this group" must cover every photo in it, including
-        // the winner — otherwise the group re-forms on the next scan around the
-        // one photo that wasn't ignored, and the user is asked all over again.
-        let ids = stack.assets.map(\.id)
-        #expect(Set(ids) == ["best", "extra1", "extra2"])
+    @Test("Survivors of a deletion are the photos that weren't deleted")
+    @MainActor func survivorsAreTheKeptPhotos() {
+        let model = ReviewModel(stacks: [threePhotoStack()])
+
+        let survivors = model.survivors(ofStacksAffectedBy: ["extra1", "extra2"])
+        #expect(Set(survivors) == ["best"])
+    }
+
+    @Test("A photo queued for deletion is never counted as kept")
+    @MainActor func deletedPhotosAreNeverSurvivors() {
+        let model = ReviewModel(stacks: [threePhotoStack()])
+
+        // The bug this pins: photos the user is deleting were being written to
+        // the "keep forever" list alongside the ones they were keeping. Deleting
+        // and keeping are opposite intentions and must never both apply.
+        let survivors = model.survivors(ofStacksAffectedBy: ["extra1"])
+        #expect(!survivors.contains("extra1"))
+        #expect(Set(survivors) == ["best", "extra2"])
+    }
+
+    @Test("Groups the deletion didn't touch are left out")
+    @MainActor func untouchedGroupsAreNotRecorded() {
+        let untouched = PhotoStack(
+            assets: [PhotoAsset.make(id: "other1"), PhotoAsset.make(id: "other2")],
+            bestShotID: "other1",
+            rankedAssetIDs: ["other1", "other2"],
+            assetsPreselectedForDeletion: ["other2"]
+        )
+        let model = ReviewModel(stacks: [threePhotoStack(), untouched])
+
+        // Scrolling past a group is not a decision about it. Only groups the
+        // user actually deleted from should have their survivors recorded.
+        let survivors = model.survivors(ofStacksAffectedBy: ["extra1", "extra2"])
+        #expect(Set(survivors) == ["best"])
+    }
+
+    @Test("Deleting nothing records nothing")
+    @MainActor func noDeletionsMeansNoSurvivors() {
+        let model = ReviewModel(stacks: [threePhotoStack()])
+        #expect(model.survivors(ofStacksAffectedBy: []).isEmpty)
+    }
+
+    @Test("Deleting a whole group leaves no survivors to record")
+    @MainActor func wholeGroupDeletedHasNoSurvivors() {
+        let model = ReviewModel(stacks: [threePhotoStack()])
+        let survivors = model.survivors(ofStacksAffectedBy: ["best", "extra1", "extra2"])
+        #expect(survivors.isEmpty)
     }
 }

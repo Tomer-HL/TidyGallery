@@ -37,6 +37,7 @@
 "Delete %@?" = "Delete %@?";
 "Delete %lld" = "Delete %lld";
 "Deleted %@" = "Deleted %@";
+"Deleted %@ · kept %@" = "Deleted %@ · kept %@";
 "Deleting…" = "Deleting…";
 "Deselect All" = "Deselect All";
 "Detected on-device" = "Detected on-device";

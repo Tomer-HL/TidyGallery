@@ -37,6 +37,7 @@
 "Delete %@?" = "למחוק %@?";
 "Delete %lld" = "מחק %lld";
 "Deleted %@" = "%@ נמחקו";
+"Deleted %@ · kept %@" = "‏%1$@ נמחקו · %2$@ נשמרו";
 "Deleting…" = "מוחקים…";
 "Deselect All" = "בטל בחירה";
 "Detected on-device" = "זוהה במכשיר";

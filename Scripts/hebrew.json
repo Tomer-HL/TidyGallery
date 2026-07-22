@@ -1,6 +1,5 @@
 {
   "_comment": "English source key -> Hebrew. Edited by hand; consumed by Scripts/build_localizations.py, which writes he.lproj/Localizable.strings. Keys must match the runtime format strings exactly (%@ / %lld), because that is what the app looks up. Two keys are deliberately absent and must stay absent: bare '%lld' and '%lld%' are pure numbers with no words in them, so a translation would be an identity mapping that can only rot.",
-
   "Clean up": "ניקוי",
   "Review": "סקירה",
   "Rescan": "סריקה מחדש",
@@ -12,12 +11,10 @@
   "Reset to defaults": "איפוס לברירת מחדל",
   "Sort": "מיון",
   "Age": "גיל",
-
   "Reclaim space": "פינוי מקום",
   "Clutter": "בלגן",
   "By content": "לפי תוכן",
   "Your decisions": "ההחלטות שלך",
-
   "Screenshots": "צילומי מסך",
   "Large videos": "סרטונים גדולים",
   "Big files": "קבצים גדולים",
@@ -32,7 +29,6 @@
   "Recommended cleanup": "ניקוי מומלץ",
   "Duplicates": "כפילויות",
   "Ignored": "לא להציע שוב",
-
   "Screen grabs you probably don't need anymore": "צילומי מסך שכנראה כבר לא צריך",
   "Videos take the most space — biggest first": "סרטונים תופסים הכי הרבה מקום — הגדולים קודם",
   "Your largest photos and Live Photos": "התמונות והתמונות החיות הגדולות ביותר",
@@ -47,7 +43,6 @@
   "The safe near-duplicates we suggest removing": "הכפילויות הבטוחות שאנחנו מציעים למחוק",
   "Bursts and near-duplicates, with the best shot picked for you": "רצפים וכפילויות, עם התמונה הטובה ביותר שנבחרה עבורך",
   "Photos you chose to keep — never suggested again": "תמונות שבחרת לשמור — לא נציע אותן שוב",
-
   "No screenshots": "אין צילומי מסך",
   "No videos": "אין סרטונים",
   "Nothing oversized": "אין קבצים חריגים בגודלם",
@@ -61,7 +56,6 @@
   "No exact duplicates": "אין כפילויות מדויקות",
   "Nothing to recommend": "אין המלצות",
   "Nothing ignored": "לא ויתרת על כלום",
-
   "You don't have any screenshots to clean up right now.": "אין לך כרגע צילומי מסך לניקוי.",
   "There are no videos in your library to review.": "אין סרטונים בספרייה שלך לסקירה.",
   "We didn't find unusually large photos to review.": "לא מצאנו תמונות גדולות במיוחד לסקירה.",
@@ -76,7 +70,6 @@
   "There are no confident duplicate suggestions right now.": "אין כרגע הצעות כפילות ודאיות.",
   "Photos you choose to keep will be listed here, and won't be suggested again.": "תמונות שתבחר לשמור יופיעו כאן, ולא נציע אותן שוב.",
   "No more duplicate stacks to review. Your gallery is looking clean.": "אין עוד קבוצות כפילויות לסקירה. הגלריה שלך נראית נקייה.",
-
   "Welcome to TidyGallery": "ברוך הבא ל‑TidyGallery",
   "Tidy your gallery": "לסדר את הגלריה",
   "A calmer way to clean up your photos.": "דרך רגועה יותר לנקות את התמונות שלך.",
@@ -85,7 +78,6 @@
   "Scan my library": "סרוק את הספרייה שלי",
   "How much should I scan?": "כמה לסרוק?",
   "Scan scope": "היקף הסריקה",
-
   "Past month": "החודש האחרון",
   "Past 3 months": "3 החודשים האחרונים",
   "Past year": "השנה האחרונה",
@@ -94,7 +86,6 @@
   "A good balance for a quick clean-up": "איזון טוב לניקוי מהיר",
   "Most of what people actually revisit": "רוב מה שבאמת חוזרים אליו",
   "Thorough, but the first scan takes a while": "יסודי, אבל הסריקה הראשונה לוקחת זמן",
-
   "Newest first": "החדשות קודם",
   "Oldest first": "הישנות קודם",
   "Largest first": "הגדולות קודם",
@@ -102,7 +93,6 @@
   "Any age": "כל גיל",
   "1–3 years old": "בנות 1–3 שנים",
   "Older than 3 years": "מעל 3 שנים",
-
   "All tidy": "הכול מסודר",
   "Nothing to clean up in this range. Try a wider scan from the menu above to look further back.": "אין מה לנקות בטווח הזה. נסה סריקה רחבה יותר מהתפריט למעלה כדי להסתכל אחורה.",
   "Still looking for duplicates…": "עדיין מחפשים כפילויות…",
@@ -111,32 +101,27 @@
   "reclaimable": "ניתן לפנות",
   "Applying new settings…": "מחילים את ההגדרות החדשות…",
   "Deleting…": "מוחקים…",
-
   "They'll move to Recently Deleted, where you can recover them for 30 days.": "הן יעברו ל״נמחקו לאחרונה״, ותוכל לשחזר אותן במשך 30 יום.",
   "Everything below is a suggestion — nothing is deleted until you select it and confirm.": "כל מה שלמטה הוא הצעה — שום דבר לא נמחק עד שתבחר ותאשר.",
   "They weren't analysed, so they're missing from Duplicates and the content categories. Analysing them means downloading them, which uses data.": "הן לא נותחו, ולכן הן חסרות בכפילויות ובקטגוריות התוכן. כדי לנתח אותן צריך להוריד אותן, וזה צורך נתונים.",
   "Download and analyse them": "הורד ונתח אותן",
-
   "Select extras": "בחר את העודפות",
   "Keep all": "שמור הכול",
   "Keeping all — tap photos to remove": "שומרים הכול — הקש על תמונות כדי להסיר",
   "This is the best shot in its group": "זו התמונה הטובה ביותר בקבוצה",
   "Select All": "בחר הכול",
   "Deselect All": "בטל בחירה",
-
   "Why this photo?": "למה התמונה הזאת?",
   "How it scored": "איך היא נוקדה",
   "What we noticed": "מה שמנו לב",
   "Detected on-device": "זוהה במכשיר",
   "What Apple's image classifier saw. These drive the content categories (Food, Pets, …). If a photo is in the wrong category, this shows why.": "מה שמסווג התמונות של אפל ראה. אלה מזינים את קטגוריות התוכן (אוכל, חיות מחמד, …). אם תמונה בקטגוריה הלא נכונה, כאן רואים למה.",
   "Scores combine sharpness, face quality and aesthetics. They rank photos within a group — they aren't a verdict on the photo.": "הניקוד משלב חדות, איכות פנים ואסתטיקה. הוא מדרג תמונות בתוך קבוצה — הוא לא פסק דין על התמונה.",
-
   "Sharpness": "חדות",
   "Aesthetics": "אסתטיקה",
   "Face quality": "איכות הפנים",
   "Not available": "לא זמין",
   "No faces detected": "לא זוהו פנים",
-
   "Favourite — never suggested for deletion": "מועדפת — לעולם לא נציע למחוק",
   "Someone's eyes look closed": "נראה שלמישהו העיניים עצומות",
   "Their eyes look closed": "נראה שהעיניים עצומות",
@@ -147,7 +132,6 @@
   "Clearly lower quality than the best shot": "באיכות נמוכה בבירור מהתמונה הטובה ביותר",
   "Very close in quality to the best shot": "קרובה מאוד באיכותה לתמונה הטובה ביותר",
   "Nothing stands out — yours to judge": "שום דבר לא בולט — ההחלטה שלך",
-
   "Duplicate sensitivity": "רגישות לכפילויות",
   "How alike two photos must look to be grouped. Lower groups only very close matches; higher groups photos that merely share a composition.": "כמה שתי תמונות צריכות להיראות דומות כדי להיות מקובצות. ערך נמוך מקבץ רק התאמות קרובות מאוד; ערך גבוה מקבץ גם תמונות שרק חולקות קומפוזיציה.",
   "At most this share of your library can be flagged as soft. Raise it to see more candidates, lower it to see only the worst.": "לכל היותר החלק הזה מהספרייה יסומן כרך. העלה כדי לראות יותר מועמדות, הורד כדי לראות רק את הגרועות.",
@@ -158,7 +142,6 @@
   "Content detection sets how confident the classifier must be before tagging Food, Pets, Documents and so on — lower catches more. These are computed while analysing, so changing them re-analyses your photos.": "זיהוי תוכן קובע כמה המסווג צריך להיות בטוח לפני שהוא מתייג אוכל, חיות מחמד, מסמכים וכדומה — ערך נמוך תופס יותר. אלה מחושבים בזמן הניתוח, ולכן שינוי שלהם מנתח מחדש את התמונות.",
   "Analyse iCloud photos": "נתח תמונות מ‑iCloud",
   "Photos stored only in iCloud can't be analysed without downloading them. Left off, they're skipped rather than judged from a low-quality preview — which would report sharp photos as blurry. Turning this on uses network data.": "תמונות ששמורות רק ב‑iCloud לא ניתנות לניתוח בלי להוריד אותן. כשהאפשרות כבויה, מדלגים עליהן במקום לשפוט אותן לפי תצוגה מקדימה באיכות נמוכה — מה שהיה מדווח על תמונות חדות כמטושטשות. הפעלה צורכת נתונים.",
-
   " · frees ~%@": " · מפנה ~%@",
   "%@ stored in iCloud": "%@ שמורות ב‑iCloud",
   "%@ to review": "%@ לסקירה",
@@ -180,7 +163,6 @@
   "TidyGallery – %@": "‏TidyGallery – %@",
   "Won't suggest %@ again": "לא נציע %@ שוב",
   "of %@ in your library": "מתוך %@ בספרייה שלך",
-
   "noun.photo.singular": "תמונה",
   "noun.video.singular": "סרטון",
   "noun.screenshot.singular": "צילום מסך",
@@ -195,5 +177,6 @@
   "noun.safeDuplicate.singular": "כפילות בטוחה",
   "Never suggest": "אל תציע שוב",
   "Couldn't save your choice": "לא הצלחנו לשמור את הבחירה שלך",
-  "The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart.": "התמונות ששמרת מוסתרות בינתיים, אבל ההחלטה לא נכתבה לאחסון ולא תישרד הפעלה מחדש."
+  "The photos you kept are hidden for now, but the decision wasn't written to storage and won't survive a restart.": "התמונות ששמרת מוסתרות בינתיים, אבל ההחלטה לא נכתבה לאחסון ולא תישרד הפעלה מחדש.",
+  "Deleted %@ · kept %@": "‏%1$@ נמחקו · %2$@ נשמרו"
 }

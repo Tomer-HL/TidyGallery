@@ -171,12 +171,14 @@ def main() -> int:
 
     missing = sorted(expected - set(hebrew))
     if missing:
-        problems.append("No Hebrew translation for %d string(s):" % len(missing))
-        problems += [f"    {key!r}" % () for key in missing]
+        problems.append(f"No Hebrew translation for {len(missing)} string(s):")
+        # No `%`-formatting here: the keys themselves contain %@ and %lld, which
+        # a format operation would try to consume as placeholders and crash on.
+        problems += [f"    {key!r}" for key in missing]
 
     stale = sorted(set(hebrew) - expected)
     if stale:
-        problems.append("Hebrew translations for %d string(s) the code no longer uses:" % len(stale))
+        problems.append(f"Hebrew translations for {len(stale)} string(s) the code no longer uses:")
         problems += [f"    {key!r}" for key in stale]
 
     missing_plurals = sorted({f"count.{case}" for case in nouns} - set(plurals))
