@@ -102,9 +102,19 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// `nil` every size is measured fresh, exactly as before.
     private let sizeCache: AssetSizeCacheStore?
 
-    init(pageSize: Int = 200, sizeCache: AssetSizeCacheStore? = nil) {
+    /// Persistent cache for "is this video a screen recording". Optional for the
+    /// same reason as `sizeCache`: nil simply means every video is walked, which
+    /// is the behaviour that existed before this cache.
+    private let recordingCache: RecordingFlagStore?
+
+    init(
+        pageSize: Int = 200,
+        sizeCache: AssetSizeCacheStore? = nil,
+        recordingCache: RecordingFlagStore? = nil
+    ) {
         self.pageSize = pageSize
         self.sizeCache = sizeCache
+        self.recordingCache = recordingCache
     }
 
     /// Fetch options with a scope's date window applied.
@@ -337,6 +347,10 @@ final class PhotoLibraryService: @unchecked Sendable {
         /// been wasted work.
         var filenameWalkSeconds: Double = 0
         var enumerated: Int = 0
+        /// Videos whose recording status came from `CachedRecordingFlag`.
+        var recordingFlagsFromCache: Int = 0
+        /// Videos that needed the `PHAssetResource` walk this run.
+        var recordingFlagsWalked: Int = 0
     }
 
     /// Videos **and** the subset that are screen recordings, in a single pass.
@@ -351,31 +365,109 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// deletion.
     func fetchVideosAndScreenRecordings(scope: ScanScope) async -> VideoFetch {
         let start = ContinuousClock.now
-        let assets = PHAsset.fetchAssets(with: .video, options: Self.options(scope: scope))
 
+        // 1. Snapshot every video. Cheap — no resource lookups here.
         var videos: [PhotoAsset] = []
-        var recordings: [PhotoAsset] = []
-        var filenameWalkSeconds: Double = 0
-        videos.reserveCapacity(assets.count)
+        do {
+            let assets = PHAsset.fetchAssets(with: .video, options: Self.options(scope: scope))
+            videos.reserveCapacity(assets.count)
+            assets.enumerateObjects { asset, _, _ in
+                videos.append(Self.snapshot(asset))
+            }
+        }
 
-        assets.enumerateObjects { asset, _, _ in
-            let snapshot = Self.snapshot(asset)
-            videos.append(snapshot)
+        // 2. Resolve recording status in bounded batches: read cache, walk only
+        //    what it can't answer, write back.
+        //
+        //    Batched for the three reasons `measure(_:)` is, and this path needs
+        //    them more, not less. The SwiftData `IN` query runs on EVERY launch
+        //    with every video id, so an unbatched version hands it the whole
+        //    library forever, not just on a cold run. The walk is the app's
+        //    longest uninterruptible stretch of `PHAssetResource` work, so it
+        //    needs a cancellation point. And writing per batch means a first
+        //    launch that is backgrounded partway keeps what it has already
+        //    classified rather than paying for all of it again.
+        var known: [String: Bool] = [:]
+        var filenameWalkSeconds: Double = 0
+        var walked = 0
+        var fromCache = 0
+
+        for chunkStart in stride(from: 0, to: videos.count, by: Self.resourceBatchSize) {
+            if Task.isCancelled { break }
+
+            let batch = videos[chunkStart ..< min(chunkStart + Self.resourceBatchSize, videos.count)]
+            let ids = batch.map(\.id)
+
+            var cached: [String: Bool] = [:]
+            if let recordingCache {
+                cached = (try? await recordingCache.flags(for: ids)) ?? [:]
+            }
+            for (id, flag) in cached { known[id] = flag }
+            fromCache += cached.count
+
+            let unknown = ids.filter { cached[$0] == nil }
+            guard !unknown.isEmpty else { continue }
 
             let walkStart = ContinuousClock.now
-            let isScreenRecording = PHAssetResource.assetResources(for: asset)
-                .contains { $0.originalFilename.lowercased().hasPrefix("rpreplay") }
+            let fresh = Self.screenRecordingFlags(forVideoIDs: unknown)
             filenameWalkSeconds += (ContinuousClock.now - walkStart).inSeconds
 
-            if isScreenRecording { recordings.append(snapshot) }
+            for (id, flag) in fresh { known[id] = flag }
+            walked += fresh.count   // what was actually resolved, not what was asked for
+
+            if let recordingCache, !fresh.isEmpty {
+                // `false` is stored as deliberately as `true`. Roughly nine in
+                // ten videos are not screen recordings, so treating a negative
+                // as "not cached" would leave nearly the whole cost in place.
+                let entries = fresh.map {
+                    RecordingFlagStore.Entry(id: $0.key, isScreenRecording: $0.value)
+                }
+                try? await recordingCache.storeBatch(entries)
+            }
         }
+
+        // A cancelled run leaves some videos unclassified, so this list can be
+        // short. Safe: Screen recordings is a surfacing-only category with
+        // nothing pre-selected, so under-reporting hides an opportunity rather
+        // than risking anything.
+        let recordings = videos.filter { known[$0.id] == true }
+
         return VideoFetch(
             videos: videos,
             recordings: recordings,
             seconds: (ContinuousClock.now - start).inSeconds,
             filenameWalkSeconds: filenameWalkSeconds,
-            enumerated: assets.count
+            enumerated: videos.count,
+            recordingFlagsFromCache: fromCache,
+            recordingFlagsWalked: walked
         )
+    }
+
+    /// The expensive part, isolated: resolves ReplayKit's filename signature for
+    /// a set of video ids.
+    ///
+    /// A video the user renamed won't be detected — acceptable, since that only
+    /// means it doesn't appear under Screen recordings, never a false deletion.
+    ///
+    /// An asset with **no readable resources is omitted**, not recorded as
+    /// "not a recording". The distinction matters now in a way it didn't before
+    /// this was cached: the old code re-derived the answer every launch, so a
+    /// transient read failure healed itself on the next run. A cached `false`
+    /// has no staleness rule and would stick forever, quietly removing that
+    /// video from the category for good. `measureOnDisk` below makes the same
+    /// call for the same reason — a failed read must never be persisted as a
+    /// confident answer.
+    private static func screenRecordingFlags(forVideoIDs ids: [String]) -> [String: Bool] {
+        guard !ids.isEmpty else { return [:] }
+        var flags: [String: Bool] = [:]
+        PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+            .enumerateObjects { asset, _, _ in
+                let resources = PHAssetResource.assetResources(for: asset)
+                guard !resources.isEmpty else { return }   // unreadable: ask again next time
+                flags[asset.localIdentifier] = resources
+                    .contains { $0.originalFilename.lowercased().hasPrefix("rpreplay") }
+            }
+        return flags
     }
 
     /// Candidate set for the "Big files" category: every Live Photo plus the
@@ -601,10 +693,15 @@ final class PhotoLibraryService: @unchecked Sendable {
         var isComplete = true
     }
 
-    /// How many assets we resolve per round trip. Bounds both the
-    /// `fetchAssets(withLocalIdentifiers:)` for cache misses and the SwiftData
-    /// `IN` query, neither of which wants a 20,000-element list.
-    private static let sizeBatchSize = 500
+    /// How many assets we resolve per round trip, for any cached lookup backed
+    /// by `PHAssetResource`.
+    ///
+    /// Bounds both the `fetchAssets(withLocalIdentifiers:)` for cache misses and
+    /// the SwiftData `IN` query, neither of which wants a 20,000-element list.
+    /// Shared by the on-disk size cache and the screen-recording cache: they
+    /// are the same expensive API read for different fields, with the same
+    /// batching needs and the same need for a cancellation point.
+    private static let resourceBatchSize = 500
 
     /// Total on-disk byte size for each asset id.
     ///
@@ -684,13 +781,13 @@ final class PhotoLibraryService: @unchecked Sendable {
         var result = SizeMeasurement()
         result.sizes.reserveCapacity(identities.count)
 
-        for start in stride(from: 0, to: identities.count, by: Self.sizeBatchSize) {
+        for start in stride(from: 0, to: identities.count, by: Self.resourceBatchSize) {
             if Task.isCancelled {
                 result.isComplete = false
                 return result
             }
 
-            let batch = Array(identities[start ..< min(start + Self.sizeBatchSize, identities.count)])
+            let batch = Array(identities[start ..< min(start + Self.resourceBatchSize, identities.count)])
 
             // 1. What do we already know? Absent means missing OR stale.
             var cached: [String: Int64] = [:]

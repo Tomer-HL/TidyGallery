@@ -195,6 +195,16 @@ struct ScanMetrics: Sendable, Equatable, Codable {
     /// cost appear to blow up exactly when the cache is doing its job.
     var sizeWalkSeconds: Double = 0
 
+    /// Videos whose screen-recording status was served from cache.
+    var recordingFlagsFromCache = 0
+    /// Videos that needed the `PHAssetResource` filename walk this run.
+    ///
+    /// Tracked separately from the size cache because it is a different call on
+    /// the same expensive API, and because it was 97% of the metadata pass
+    /// before it was cached. On any scan after the first this should be roughly
+    /// the number of videos added since.
+    var recordingFlagsWalked = 0
+
     // MARK: Timing
 
     /// Ordered by first occurrence, so the report reads in pipeline order.
@@ -321,6 +331,13 @@ struct ScanMetrics: Sendable, Equatable, Codable {
         let considered = sizesFromCache + sizesMeasured
         guard considered > 0 else { return nil }
         return Double(sizesFromCache) / Double(considered)
+    }
+
+    /// Share of videos whose recording status needed no resource lookup.
+    var recordingCacheHitRate: Double? {
+        let considered = recordingFlagsFromCache + recordingFlagsWalked
+        guard considered > 0 else { return nil }
+        return Double(recordingFlagsFromCache) / Double(considered)
     }
 
     /// Cost per *freshly measured* size. This is the number the size cache
@@ -474,6 +491,8 @@ extension ScanMetrics {
         // A report written by a build that predates outcomes reached `save`,
         // and the only call site then was the end of a completed scan.
         outcome = try c.decodeIfPresent(Outcome.self, forKey: .outcome) ?? .completed
+        recordingFlagsFromCache = try int(.recordingFlagsFromCache)
+        recordingFlagsWalked = try int(.recordingFlagsWalked)
     }
 }
 
@@ -556,6 +575,13 @@ extension ScanMetrics {
             if let perSize = millisecondsPerFreshSize {
                 lines.append("  " + String(format: "Cost per measure:   %.1f ms", perSize))
             }
+        }
+
+        if recordingFlagsFromCache + recordingFlagsWalked > 0 {
+            lines.append("")
+            lines.append("SCREEN-RECORDING CHECKS")
+            lines.append("  From cache:         \(recordingFlagsFromCache)\(Self.percentSuffix(recordingCacheHitRate))")
+            lines.append("  Freshly walked:     \(recordingFlagsWalked)")
         }
 
         lines.append("")

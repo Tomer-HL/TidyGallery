@@ -159,6 +159,10 @@ final class LibraryScanCoordinator {
     /// so `AnalysisCacheStore.purgeAll()` has no counterpart here.
     private let sizeCache: AssetSizeCacheStore?
 
+    /// Held for the same reason as `sizeCache`: only to purge rows for deleted
+    /// assets. `PhotoLibraryService` owns the read/write path.
+    private let recordingCache: RecordingFlagStore?
+
     /// Live analysis configuration. Mutable so the Settings screen can retune
     /// detection without a rebuild.
     private(set) var config: AnalysisConfiguration
@@ -267,6 +271,7 @@ final class LibraryScanCoordinator {
         cache: AnalysisCacheStore,
         ignoreList: IgnoreListStore,
         sizeCache: AssetSizeCacheStore? = nil,
+        recordingCache: RecordingFlagStore? = nil,
         tuning: TuningSettings = TuningStore.load()
     ) {
         self.library = library
@@ -274,6 +279,7 @@ final class LibraryScanCoordinator {
         self.cache = cache
         self.ignoreList = ignoreList
         self.sizeCache = sizeCache
+        self.recordingCache = recordingCache
         self.tuning = tuning
         self.config = tuning.applied()
     }
@@ -564,6 +570,10 @@ final class LibraryScanCoordinator {
             // (`libraryFileSizes` measures every media type), and purging those
             // is precisely what widening the baseline bought.
             try? await sizeCache?.purge(ids: change.removedIdentifiers)
+            // Recording flags are video-only, so this is the purge that most
+            // needs the widened observer baseline: without it, deleting a video
+            // left a row that nothing would ever clean up.
+            try? await recordingCache?.purge(ids: change.removedIdentifiers)
             let removed = Set(change.removedIdentifiers)
             analysedAssets.removeAll { removed.contains($0.id) }
             isRelevant = true   // a deletion always changes what the lists show
@@ -719,8 +729,14 @@ final class LibraryScanCoordinator {
         metrics.record(
             ScanMetrics.Phase.recordingFilenameWalk,
             seconds: videoResult.filenameWalkSeconds,
-            assetsSeen: videoResult.enumerated
+            // Assets *walked*, not videos enumerated. Once the cache is warm
+            // this is near zero, and dividing the (also near zero) time by the
+            // full video count would report a per-asset cost that looks like
+            // the call got cheaper rather than like it stopped happening.
+            assetsSeen: videoResult.recordingFlagsWalked
         )
+        metrics.recordingFlagsFromCache += videoResult.recordingFlagsFromCache
+        metrics.recordingFlagsWalked += videoResult.recordingFlagsWalked
         metrics.record(
             ScanMetrics.Phase.screenshotFetch,
             seconds: screenshotResult.seconds,
@@ -1059,9 +1075,10 @@ final class LibraryScanCoordinator {
         // Rows for assets we know are gone should not survive on a technicality.
         // Purging twice is harmless: both stores delete by id and no-op on rows
         // that aren't there.
-        Task { [cache, sizeCache] in
+        Task { [cache, sizeCache, recordingCache] in
             try? await cache.purge(ids: ids)
             try? await sizeCache?.purge(ids: ids)
+            try? await recordingCache?.purge(ids: ids)
         }
     }
 

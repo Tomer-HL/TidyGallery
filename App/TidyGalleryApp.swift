@@ -44,7 +44,8 @@ struct TidyGalleryApp: App {
         //    cache and is injected into the library service, so every size
         //    lookup in the app goes through it without any call site knowing.
         let sizeCache = AssetSizeCacheStore(modelContainer: container)
-        let library = PhotoLibraryService(sizeCache: sizeCache)
+        let recordingCache = RecordingFlagStore(modelContainer: container)
+        let library = PhotoLibraryService(sizeCache: sizeCache, recordingCache: recordingCache)
         self.library = library
 
         let cache = AnalysisCacheStore(modelContainer: container)
@@ -59,6 +60,7 @@ struct TidyGalleryApp: App {
             cache: cache,
             ignoreList: ignoreList,
             sizeCache: sizeCache,
+            recordingCache: recordingCache,
             tuning: tuning
         )
         _coordinator = State(initialValue: coordinator)
@@ -84,7 +86,12 @@ struct TidyGalleryApp: App {
         // `IgnoredAsset` is still in this schema so the legacy rows in an
         // existing `default.store` remain readable for the one-time import
         // below. Nothing writes them here any more.
-        let schema = Schema([CachedAnalysis.self, CachedAssetSize.self, IgnoredAsset.self])
+        let schema = Schema([
+            CachedAnalysis.self,
+            CachedAssetSize.self,
+            CachedRecordingFlag.self,
+            IgnoredAsset.self
+        ])
 
         if let container = try? ModelContainer(for: schema) {
             return container

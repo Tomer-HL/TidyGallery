@@ -745,6 +745,51 @@ struct ScanMetricsTests {
         #expect(report.contains("95%"))   // 190 / 199
     }
 
+    @Test("Recording-check hit rate is reported over videos, not photos")
+    func recordingCacheHitRate() {
+        var metrics = ScanMetrics()
+        // A library with far more stills than videos: sharing a denominator
+        // with the size counters would report a rate for the wrong population.
+        metrics.sizesFromCache = 8_000
+        metrics.sizesMeasured = 756
+        metrics.recordingFlagsFromCache = 1_500
+        metrics.recordingFlagsWalked = 26
+
+        #expect(abs((metrics.recordingCacheHitRate ?? 0) - (1500.0 / 1526.0)) < 0.0001)
+    }
+
+    @Test("The report shows recording checks only once some happened")
+    func reportIncludesRecordingSection() {
+        var metrics = ScanMetrics()
+        #expect(!metrics.report().contains("SCREEN-RECORDING CHECKS"))
+
+        // The first cold run: every video walked, nothing cached.
+        metrics.recordingFlagsWalked = 1_526
+        let cold = metrics.report()
+        #expect(cold.contains("SCREEN-RECORDING CHECKS"))
+        #expect(cold.contains("1526"))
+
+        // Every run after: the number that should be near zero.
+        metrics.recordingFlagsFromCache = 1_526
+        metrics.recordingFlagsWalked = 0
+        let warm = metrics.report()
+        #expect(warm.contains("100%"))
+    }
+
+    @Test("Recording counters survive a round trip")
+    func recordingCountersEncode() throws {
+        var metrics = ScanMetrics()
+        metrics.recordingFlagsFromCache = 1_500
+        metrics.recordingFlagsWalked = 26
+
+        let restored = try JSONDecoder().decode(
+            ScanMetrics.self,
+            from: try JSONEncoder().encode(metrics)
+        )
+        #expect(restored.recordingFlagsFromCache == 1_500)
+        #expect(restored.recordingFlagsWalked == 26)
+    }
+
     @Test("Size counters survive a round trip through the metrics store")
     func sizeCountersEncode() throws {
         var metrics = ScanMetrics()
