@@ -80,17 +80,22 @@ struct AssetPage: Sendable {
     let totalCount: Int
 }
 
-final class PhotoLibraryService: Sendable {
+/// `@unchecked Sendable`, not plain `Sendable`, and the difference is not
+/// cosmetic. Every stored property here is an immutable `let`, but
+/// `PHCachingImageManager` is not itself `Sendable`, so the compiler cannot
+/// verify the conformance no matter how the property is annotated
+/// (`nonisolated(unsafe)` waives *isolation* checking on a property; it does not
+/// waive a type's `Sendable` conformance requirements). What makes this safe is
+/// a fact the compiler has no way to know: `PHImageManager` and its caching
+/// subclass are documented as usable from any thread. `@unchecked` is the honest
+/// way to say "I checked, and here is why".
+final class PhotoLibraryService: @unchecked Sendable {
 
     /// How many assets we snapshot per page. Snapshots are tiny value types, so
     /// this bounds only the working set handed to the analyzer at a time.
     private let pageSize: Int
 
-    /// `nonisolated(unsafe)` with justification: `PHImageManager` and its
-    /// caching subclass are documented as safe to use from any thread, and this
-    /// reference is immutable. The compiler can't know the first part, so the
-    /// annotation is the honest way to say "I checked".
-    private nonisolated(unsafe) let imageManager = PHCachingImageManager()
+    private let imageManager = PHCachingImageManager()
 
     init(pageSize: Int = 200) {
         self.pageSize = pageSize
@@ -400,16 +405,19 @@ final class PhotoLibraryService: Sendable {
                     // Only a placeholder so far. If the real one is in iCloud and
                     // we may not fetch it, no better callback is coming — resolve
                     // now rather than waiting forever.
-                    if isInCloud && !allowNetwork { box.resume(continuation, with: .inCloud) }
+                    if isInCloud, !allowNetwork, box.claim() {
+                        continuation.resume(returning: .inCloud)
+                    }
                     return
                 }
 
+                guard box.claim() else { return }
                 if let cgImage = image?.cgImage {
-                    box.resume(continuation, with: .image(cgImage))
+                    continuation.resume(returning: .image(cgImage))
                 } else if isInCloud {
-                    box.resume(continuation, with: .inCloud)
+                    continuation.resume(returning: .inCloud)
                 } else {
-                    box.resume(continuation, with: .unavailable)
+                    continuation.resume(returning: .unavailable)
                 }
             }
         }
@@ -471,7 +479,8 @@ final class PhotoLibraryService: Sendable {
             ) { image, info in
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 if isDegraded { return }        // wait for the full-quality pass
-                box.resume(continuation, with: image)
+                guard box.claim() else { return }
+                continuation.resume(returning: image)
             }
         }
     }
@@ -585,16 +594,25 @@ final class PhotoLibraryService: Sendable {
 /// actor that is a mutable capture in a `@Sendable` closure — resuming a
 /// continuation twice is a hard crash, so the guard needs to be genuinely
 /// atomic rather than merely single-threaded by accident.
+///
+/// It hands out *permission* rather than performing the resume itself, which
+/// looks clumsier than a `resume(_:with:)` helper and is deliberate.
+/// `CheckedContinuation.resume(returning:)` takes a `sending` parameter, and
+/// forwarding an unconstrained generic `T` into it fails to compile — "sending
+/// 'value' risks causing data races" — because a helper that merely received
+/// the value can't prove it is disconnected from its original region. Resuming
+/// at the original call site keeps the value's region exactly where the
+/// compiler can still reason about it.
 private final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
-    private var resumed = false
+    private var hasResumed = false
 
-    func resume<T>(_ continuation: CheckedContinuation<T, Never>, with value: T) {
+    /// Returns `true` for the first caller only.
+    func claim() -> Bool {
         lock.lock()
-        let alreadyResumed = resumed
-        resumed = true
-        lock.unlock()
-        guard !alreadyResumed else { return }
-        continuation.resume(returning: value)
+        defer { lock.unlock() }
+        if hasResumed { return false }
+        hasResumed = true
+        return true
     }
 }
