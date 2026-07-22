@@ -31,14 +31,22 @@ enum DeviceSummary {
     /// The `uname` machine string ("iPhone16,1"), which is what actually
     /// identifies the silicon. On the Simulator this reports the *host* Mac, so
     /// it doubles as a warning that the numbers aren't from real hardware.
+    ///
+    /// `utsname.machine` is imported into Swift as a 256-element tuple of
+    /// `CChar`, which is awkward to read. The pointer-rebinding approach needs
+    /// `MemoryLayout.size(ofValue: info.machine)` while `&info.machine` is
+    /// already borrowed — two overlapping accesses to `info`, which Swift's
+    /// exclusivity checking rejects. Walking the tuple with `Mirror` sidesteps
+    /// the pointer entirely and can't trip over that.
     static var hardwareIdentifier: String {
         var info = utsname()
         uname(&info)
-        let identifier = withUnsafePointer(to: &info.machine) { pointer in
-            pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: info.machine)) {
-                String(validatingCString: $0) ?? ""
-            }
+
+        let identifier = Mirror(reflecting: info.machine).children.reduce(into: "") { result, element in
+            guard let byte = element.value as? CChar, byte != 0 else { return }
+            result.append(Character(UnicodeScalar(UInt8(bitPattern: byte))))
         }
+
         #if targetEnvironment(simulator)
         return "Simulator (\(identifier))"
         #else

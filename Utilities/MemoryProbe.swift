@@ -52,12 +52,13 @@ enum MemoryProbe {
     static func footprintBytes() -> Int64 {
         #if canImport(Darwin)
         var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
-        )
+        // Hoisted out of the call below: computing the capacity from `count`
+        // *while* `count` is passed inout would be an overlapping access.
+        let capacity = MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+        var count = mach_msg_type_number_t(capacity)
 
         let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: capacity) { rebound in
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
             }
         }

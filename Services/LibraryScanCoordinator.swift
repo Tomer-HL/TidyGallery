@@ -188,23 +188,19 @@ final class LibraryScanCoordinator {
 
     private let memorySampleInterval = 25
 
-    /// Runs `body`, adding its duration to `metrics` under `phase`.
+    /// Adds the time since `start` to `metrics` under `phase`.
+    ///
+    /// Deliberately a plain function taking an instant, rather than a generic
+    /// `timed { … }` wrapper: a generic, `rethrows`, closure-taking helper has to
+    /// infer its result type through multi-statement and `async` closure bodies,
+    /// and gets tangled in actor-isolation inference at the one call site that
+    /// lives inside a task group. Two lines at each call site cost nothing and
+    /// can't misbehave.
     ///
     /// `ContinuousClock` rather than `Date`: it's monotonic, so a clock
     /// adjustment mid-scan can't produce a negative or wildly wrong duration.
-    private func timed<T>(_ phase: String, _ body: () throws -> T) rethrows -> T {
-        let start = ContinuousClock.now
-        defer { metrics.record(phase, seconds: (ContinuousClock.now - start).inSeconds) }
-        return try body()
-    }
-
-    /// Async variant of `timed(_:_:)`. Deliberately a different name rather than
-    /// an overload: overloading on closure async-ness alone is exactly the kind
-    /// of thing that resolves to the wrong one in a surprising context.
-    private func timedAsync<T>(_ phase: String, _ body: () async throws -> T) async rethrows -> T {
-        let start = ContinuousClock.now
-        defer { metrics.record(phase, seconds: (ContinuousClock.now - start).inSeconds) }
-        return try await body()
+    private func recordPhase(_ phase: String, since start: ContinuousClock.Instant) {
+        metrics.record(phase, seconds: (ContinuousClock.now - start).inSeconds)
     }
 
     /// Photos processed so far in the current scan, and the scoped total.
@@ -302,7 +298,9 @@ final class LibraryScanCoordinator {
         // instead of after the whole library has been analysed.
         analysedAssets = []
         stacks = []
-        timed(ScanMetrics.Phase.metadataPass) { refreshCategories() }
+        let metadataStart = ContinuousClock.now
+        refreshCategories()
+        recordPhase(ScanMetrics.Phase.metadataPass, since: metadataStart)
         phase = .finished(stackCount: 0)
 
         // STEP 2 — the slow pass, in the background. Duplicates and the content
@@ -479,7 +477,9 @@ final class LibraryScanCoordinator {
     /// re-enumerated the entire library just to hide one asset. Everything here
     /// works from lists already in memory.
     private func refreshDerivedCategories() {
-        timed(ScanMetrics.Phase.derivation) { deriveCategories() }
+        let start = ContinuousClock.now
+        deriveCategories()
+        recordPhase(ScanMetrics.Phase.derivation, since: start)
     }
 
     private func deriveCategories() {
@@ -780,9 +780,9 @@ final class LibraryScanCoordinator {
     private func process(page: AssetPage) async throws -> (assets: [PhotoAsset], newlyAnalysed: Int) {
         // 1. Batch cache lookup.
         let keys = page.assets.map { (id: $0.id, modificationDate: $0.modificationDate) }
-        let cached = try await timedAsync(ScanMetrics.Phase.cacheLookup) {
-            try await cache.freshAnalysis(for: keys)
-        }
+        let cacheStart = ContinuousClock.now
+        let cached = try await cache.freshAnalysis(for: keys)
+        recordPhase(ScanMetrics.Phase.cacheLookup, since: cacheStart)
 
         var enriched = page.assets
         var toAnalyse: [Int] = []   // indices into `enriched`
@@ -932,9 +932,9 @@ final class LibraryScanCoordinator {
                 }
             }
 
-            try? await timedAsync(ScanMetrics.Phase.cacheWrite) {
-                try await cache.storeBatch(pending)
-            }
+            let writeStart = ContinuousClock.now
+            try? await cache.storeBatch(pending)
+            recordPhase(ScanMetrics.Phase.cacheWrite, since: writeStart)
             return (enriched, freshlyAnalysed)
         }
     }
@@ -946,12 +946,13 @@ final class LibraryScanCoordinator {
     /// during a progressive scan, so on a large library it's a plausible place
     /// for time to quietly disappear.
     private func buildStacks(from assets: [PhotoAsset]) -> [PhotoStack] {
-        timed(ScanMetrics.Phase.clustering) {
-            let clusters = StackBuilder(config: config).cluster(assets)
-            let byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
-            return ShotScorer(config: config)
-                .makeStacks(from: clusters, assetsByID: byID)
-                .sorted { $0.reclaimableCount > $1.reclaimableCount }
-        }
+        let start = ContinuousClock.now
+        let clusters = StackBuilder(config: config).cluster(assets)
+        let byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+        let result = ShotScorer(config: config)
+            .makeStacks(from: clusters, assetsByID: byID)
+            .sorted { $0.reclaimableCount > $1.reclaimableCount }
+        recordPhase(ScanMetrics.Phase.clustering, since: start)
+        return result
     }
 }
