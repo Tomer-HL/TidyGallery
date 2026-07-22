@@ -230,6 +230,14 @@ blurry), and **By content** (Food, Pets, Documents, Nature, Selfies). The summar
 recomputes on scan, on the debounced library-change pass, and immediately after a
 delete.
 
+Phase 17 (onboarding + polish): a one-time welcome screen (`OnboardingView`,
+gated on a `UserDefaults` flag) runs before the first scan. For an app that
+deletes photos, the lead point is the safety promise — "nothing is deleted
+without you", "everything stays on your phone", "deleted photos are recoverable
+for 30 days" — established up front rather than buried. The home also now shows a
+friendly "All tidy" card when a scan finds nothing actionable, nudging the user
+to widen the scan scope instead of just presenting a wall of empty categories.
+
 Phase 16 (self-diagnosing categories): after several rounds of *guessing* what
 Vision labelled a photo and rebuilding to check, the classifier's top labels are
 now kept (`ClassificationLabel`, persisted with the analysis, schema v6) and

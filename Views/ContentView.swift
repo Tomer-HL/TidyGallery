@@ -13,11 +13,15 @@ import UIKit
 struct ContentView: View {
     @State var coordinator: LibraryScanCoordinator
     @State private var scope: ScanScope = ScanScopeStore.load()
+    @State private var showOnboarding = !OnboardingStore.hasOnboarded
 
     var body: some View {
-        // The finished state is the category overview home (its own navigation);
-        // the transient scan states are simple centered screens.
-        if case .finished = coordinator.phase {
+        // Onboarding runs once, before anything else — the safety promise should
+        // be the first thing the user sees, given the app deletes photos.
+        if showOnboarding {
+            OnboardingView { showOnboarding = false }
+        } else if case .finished = coordinator.phase {
+            // The finished state is the category overview home (its own navigation).
             CleanupHomeView(coordinator: coordinator)
         } else {
             ZStack {

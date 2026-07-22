@@ -31,6 +31,11 @@ struct CleanupHomeView: View {
                 LazyVStack(spacing: Theme.Spacing.m) {
                     analysisBanner
                     iCloudBanner
+
+                    if showAllClear {
+                        allClearCard
+                    }
+
                     summaryCard
 
                     sectionHeader("Reclaim space")
@@ -183,6 +188,45 @@ struct CleanupHomeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.Colors.surfaceMuted, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
+    }
+
+    // MARK: All-clear
+
+    /// Whether the scan finished and found nothing actionable at all.
+    private var showAllClear: Bool {
+        coordinator.analysisProgress == nil
+            && coordinator.stacks.isEmpty
+            && coordinator.exactDuplicateExtras.isEmpty
+            && coordinator.screenshots.isEmpty
+            && coordinator.largeVideos.isEmpty
+            && coordinator.bigFileCandidates.isEmpty
+            && coordinator.screenRecordings.isEmpty
+            && coordinator.blurryPhotos.isEmpty
+            && coordinator.foodPhotos.isEmpty
+            && coordinator.petPhotos.isEmpty
+            && coordinator.documentPhotos.isEmpty
+            && coordinator.naturePhotos.isEmpty
+            && coordinator.selfiePhotos.isEmpty
+    }
+
+    private var allClearCard: some View {
+        VStack(spacing: Theme.Spacing.s) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(Theme.Colors.best)
+                .symbolRenderingMode(.hierarchical)
+            Text("All tidy")
+                .font(.title2.bold())
+                .foregroundStyle(Theme.Colors.textPrimary)
+            Text("Nothing to clean up in this range. Try a wider scan from the menu above to look further back.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(Theme.Spacing.xl)
+        .frame(maxWidth: .infinity)
+        .background(Theme.Colors.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     // MARK: Summary card
