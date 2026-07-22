@@ -197,7 +197,7 @@ struct DiagnosticsScreen: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(phase.name)
-                        Text("\(phase.count)x · \(String(format: "%.1f", phase.averageMilliseconds)) ms avg")
+                        Text(subtitle(for: phase))
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.textSecondary)
                     }
@@ -210,8 +210,16 @@ struct DiagnosticsScreen: View {
         } header: {
             Text("Time by phase")
         } footer: {
-            Text("Image load and Vision analysis run several photos at a time, so their totals legitimately add up to more than the wall clock.")
+            Text("Image load, Vision analysis and the indented metadata fetches all run several things at a time, so their totals legitimately add up to more than the wall clock.")
         }
+    }
+
+    /// Per-asset cost where the phase counts assets, otherwise the plain average.
+    /// The per-asset figure is the one that extrapolates to a large library.
+    private func subtitle(for phase: PhaseTiming) -> String {
+        let base = "\(phase.count)x · \(String(format: "%.1f", phase.averageMilliseconds)) ms avg"
+        guard let perAsset = phase.millisecondsPerAsset else { return base }
+        return base + " · \(phase.assetsSeen) assets, \(String(format: "%.2f", perAsset)) ms each"
     }
 
     private var throughputSection: some View {

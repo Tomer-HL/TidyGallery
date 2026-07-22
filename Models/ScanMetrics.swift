@@ -42,10 +42,47 @@ struct PhaseTiming: Sendable, Equatable, Codable, Identifiable {
     /// How many times the phase ran (pages, photos, passes — phase dependent).
     var count: Int
 
+    /// How many assets this phase walked, where that is meaningful.
+    ///
+    /// Duration alone can't tell "slow per asset" apart from "walked far more
+    /// assets than expected", and those have opposite fixes: the first wants a
+    /// cheaper per-asset call, the second wants a narrower query. Zero means
+    /// the phase doesn't count assets, not that it saw none.
+    var assetsSeen: Int = 0
+
     var id: String { name }
 
     var averageMilliseconds: Double {
         count > 0 ? (totalSeconds / Double(count)) * 1000 : 0
+    }
+
+    /// Cost per asset walked — the figure that extrapolates to a big library.
+    var millisecondsPerAsset: Double? {
+        guard assetsSeen > 0 else { return nil }
+        return (totalSeconds / Double(assetsSeen)) * 1000
+    }
+
+    init(name: String, totalSeconds: Double, count: Int, assetsSeen: Int = 0) {
+        self.name = name
+        self.totalSeconds = totalSeconds
+        self.count = count
+        self.assetsSeen = assetsSeen
+    }
+
+    /// Hand-written so a report saved by an older build still decodes.
+    ///
+    /// Swift's synthesized `init(from:)` does **not** fall back to a property's
+    /// default value for a missing key — it throws. `ScanMetricsStore.load()`
+    /// swallows that with `try?`, so adding a field would silently discard the
+    /// previous run's report. That is the wrong report to lose: the one worth
+    /// reading is usually the scan that never finished, and the update that
+    /// added the field is often the one you installed to investigate it.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        totalSeconds = try container.decodeIfPresent(Double.self, forKey: .totalSeconds) ?? 0
+        count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 0
+        assetsSeen = try container.decodeIfPresent(Int.self, forKey: .assetsSeen) ?? 0
     }
 }
 
@@ -70,6 +107,30 @@ struct ScanMetrics: Sendable, Equatable, Codable {
         static let derivation = "Category derivation"
         /// Off-main on-disk size measurement of the library.
         static let sizeMeasurement = "Size measurement"
+
+        // MARK: Metadata pass, broken down
+        //
+        // The metadata pass is the cost paid on EVERY launch — unlike Vision,
+        // which is per-photo-once. It did not improve when on-disk sizes were
+        // cached, which falsified the assumption that `PHAssetResource`
+        // dominated it. These sub-phases exist so the next attempt is aimed by
+        // measurement rather than by another guess. The four fetches run
+        // concurrently, so their sum legitimately exceeds the parent total.
+
+        /// `fetchVideosAndScreenRecordings` end to end.
+        static let videoFetch = "└ Videos + recordings"
+        /// Just the per-video `PHAssetResource` walk that looks for the
+        /// ReplayKit filename prefix — a resource lookup the size cache cannot
+        /// serve, because it wants a filename rather than a size.
+        static let recordingFilenameWalk = "  └ recording filename walk"
+        /// The system Screenshots smart album.
+        static let screenshotFetch = "└ Screenshots"
+        /// The system Selfies smart album.
+        static let selfieFetch = "└ Selfies"
+        /// Enumerating every still to rank candidates by pixel area.
+        static let bigFileCandidates = "└ Big-file candidates"
+        /// Resolving on-disk sizes for that bounded candidate pool.
+        static let bigFileSizes = "  └ Big-file sizes"
     }
 
     // MARK: Context
@@ -135,13 +196,16 @@ struct ScanMetrics: Sendable, Equatable, Codable {
 
     /// Adds time to a phase, creating it on first use and preserving the order
     /// phases were first seen in.
-    mutating func record(_ name: String, seconds: Double, count: Int = 1) {
+    mutating func record(_ name: String, seconds: Double, count: Int = 1, assetsSeen: Int = 0) {
         guard seconds.isFinite, seconds >= 0 else { return }
         if let index = phases.firstIndex(where: { $0.name == name }) {
             phases[index].totalSeconds += seconds
             phases[index].count += count
+            phases[index].assetsSeen += assetsSeen
         } else {
-            phases.append(PhaseTiming(name: name, totalSeconds: seconds, count: count))
+            phases.append(
+                PhaseTiming(name: name, totalSeconds: seconds, count: count, assetsSeen: assetsSeen)
+            )
         }
     }
 
@@ -239,6 +303,55 @@ struct ScanMetrics: Sendable, Equatable, Codable {
     var isEmpty: Bool { startedAt == nil && processedCount == 0 }
 }
 
+// MARK: - Forward-compatible decoding
+
+extension ScanMetrics {
+
+    // No `init()` here on purpose: every stored property has a default, so the
+    // synthesized memberwise initialiser already serves `ScanMetrics()`, and
+    // declaring one would collide with it. Putting `init(from:)` in an
+    // EXTENSION rather than the main body is what keeps that synthesis alive —
+    // an initialiser in the main body would suppress it and break every
+    // `ScanMetrics()` call site.
+
+    /// Every field optional on the way in, so a report written by any earlier
+    /// build still loads. See the note on `PhaseTiming.init(from:)` — the same
+    /// reasoning applies, and this type has gained fields three times already
+    /// (scene tags, size counters, per-asset counts).
+    ///
+    /// `encode(to:)` stays synthesized: writing is always current-version.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func int(_ key: CodingKeys) throws -> Int { try c.decodeIfPresent(Int.self, forKey: key) ?? 0 }
+
+        scopeLabel = try c.decodeIfPresent(String.self, forKey: .scopeLabel) ?? ""
+        deviceSummary = try c.decodeIfPresent(String.self, forKey: .deviceSummary) ?? ""
+        startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+        finishedAt = try c.decodeIfPresent(Date.self, forKey: .finishedAt)
+
+        scopedAssetCount = try int(.scopedAssetCount)
+        pagesProcessed = try int(.pagesProcessed)
+        cacheHits = try int(.cacheHits)
+        analysedFresh = try int(.analysedFresh)
+        iCloudSkipped = try int(.iCloudSkipped)
+        unavailable = try int(.unavailable)
+        analysisFailures = try int(.analysisFailures)
+        failureReasons = try c.decodeIfPresent([String: Int].self, forKey: .failureReasons) ?? [:]
+
+        sizesFromCache = try int(.sizesFromCache)
+        sizesMeasured = try int(.sizesMeasured)
+        sizeWalkSeconds = try c.decodeIfPresent(Double.self, forKey: .sizeWalkSeconds) ?? 0
+
+        phases = try c.decodeIfPresent([PhaseTiming].self, forKey: .phases) ?? []
+
+        peakFootprintBytes = try c.decodeIfPresent(Int64.self, forKey: .peakFootprintBytes) ?? 0
+        minAvailableBytes = try c.decodeIfPresent(Int64.self, forKey: .minAvailableBytes)
+        memorySamples = try int(.memorySamples)
+        previousScanDidNotFinish =
+            try c.decodeIfPresent(Bool.self, forKey: .previousScanDidNotFinish) ?? false
+    }
+}
+
 // MARK: - Report
 
 extension ScanMetrics {
@@ -319,7 +432,11 @@ extension ScanMetrics {
                 let name = phase.name.padding(toLength: max(width, 18), withPad: " ", startingAt: 0)
                 let total = Self.duration(phase.totalSeconds)
                 let average = String(format: "%.1f ms avg", phase.averageMilliseconds)
-                lines.append("  \(name)  \(total)  (\(phase.count)x, \(average))")
+                var line = "  \(name)  \(total)  (\(phase.count)x, \(average))"
+                if let perAsset = phase.millisecondsPerAsset {
+                    line += String(format: "  [%d assets, %.2f ms each]", phase.assetsSeen, perAsset)
+                }
+                lines.append(line)
             }
         }
 

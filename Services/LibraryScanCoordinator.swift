@@ -45,6 +45,24 @@ private struct PageResult: Sendable {
     let visionSeconds: Double
 }
 
+/// The "Big files" category plus the cost of its two distinct halves:
+/// enumerating every still to rank by pixel area, and resolving on-disk sizes
+/// for the bounded pool that survives. Those have different fixes — a narrower
+/// query versus a cheaper per-asset call — so they are measured apart.
+///
+/// File scope for the same reason as `PageResult` above: `computeBigFiles` is
+/// `nonisolated static`, and a type nested in the `@MainActor` coordinator would
+/// inherit that isolation.
+private struct BigFileFetch: Sendable {
+    /// nil means the size pass was cancelled partway, so this holds no answer
+    /// and the caller must keep its previous list — see `computeBigFiles`.
+    var assets: [PhotoAsset]?
+    var candidateSeconds: Double = 0
+    var candidatesEnumerated: Int = 0
+    var sizeSeconds: Double = 0
+    var sizesResolved: Int = 0
+}
+
 @MainActor
 @Observable
 final class LibraryScanCoordinator {
@@ -306,9 +324,7 @@ final class LibraryScanCoordinator {
         // instead of after the whole library has been analysed.
         analysedAssets = []
         stacks = []
-        let metadataStart = ContinuousClock.now
-        await refreshCategories()
-        recordPhase(ScanMetrics.Phase.metadataPass, since: metadataStart)
+        await refreshCategories()   // times itself, parent phase and all
         phase = .finished(stackCount: 0)
 
         // STEP 2 — the slow pass, in the background. Duplicates and the content
@@ -480,6 +496,17 @@ final class LibraryScanCoordinator {
         // They're run concurrently because they're independent queries against
         // the same library; previously they were serialised by the main actor
         // whether they needed to be or not.
+        //
+        // The parent "Metadata pass" timing lives HERE rather than at the call
+        // site in `scan()`, because this method is also called by the debounced
+        // library-change recompute and by the settings path. Timing it from
+        // `scan()` alone meant the sub-phases below accumulated on every
+        // recompute while their parent did not — so the children would exceed
+        // the parent for a reason that had nothing to do with concurrency,
+        // which is exactly the misreading the breakdown exists to prevent.
+        let passStart = ContinuousClock.now
+        defer { recordPhase(ScanMetrics.Phase.metadataPass, since: passStart) }
+
         let scope = self.scope
         let stillLimit = config.bigFileCandidateStillLimit
 
@@ -494,15 +521,55 @@ final class LibraryScanCoordinator {
             displayLimit: config.bigFileDisplayLimit
         )
 
-        let (videos, recordings) = await videosAndRecordings
-        rawScreenshots = await screenshotsFetch
-        rawSelfies = await selfiesFetch
-        rawVideos = videos
-        rawRecordings = recordings
+        let videoResult = await videosAndRecordings
+        let screenshotResult = await screenshotsFetch
+        let selfieResult = await selfiesFetch
+        let bigFileResult = await bigFilesFetch
+
+        rawVideos = videoResult.videos
+        rawRecordings = videoResult.recordings
+        rawScreenshots = screenshotResult.assets
+        rawSelfies = selfieResult.assets
         // nil means the size pass was cancelled midway (a rescan overtook it),
         // so keep whatever we last published rather than replacing it with a
         // list built from incomplete measurements.
-        if let bigFiles = await bigFilesFetch { rawBigFiles = bigFiles }
+        if let bigFiles = bigFileResult.assets { rawBigFiles = bigFiles }
+
+        // Each fetch times itself, because they run concurrently: measuring
+        // them from out here would record how long each one *waited* on the
+        // others, not how long it worked. Their sum therefore exceeds the
+        // parent "Metadata pass" total, exactly as image load and Vision do.
+        metrics.record(
+            ScanMetrics.Phase.videoFetch,
+            seconds: videoResult.seconds,
+            assetsSeen: videoResult.enumerated
+        )
+        metrics.record(
+            ScanMetrics.Phase.recordingFilenameWalk,
+            seconds: videoResult.filenameWalkSeconds,
+            assetsSeen: videoResult.enumerated
+        )
+        metrics.record(
+            ScanMetrics.Phase.screenshotFetch,
+            seconds: screenshotResult.seconds,
+            assetsSeen: screenshotResult.enumerated
+        )
+        metrics.record(
+            ScanMetrics.Phase.selfieFetch,
+            seconds: selfieResult.seconds,
+            assetsSeen: selfieResult.enumerated
+        )
+        metrics.record(
+            ScanMetrics.Phase.bigFileCandidates,
+            seconds: bigFileResult.candidateSeconds,
+            assetsSeen: bigFileResult.candidatesEnumerated
+        )
+        metrics.record(
+            ScanMetrics.Phase.bigFileSizes,
+            seconds: bigFileResult.sizeSeconds,
+            assetsSeen: bigFileResult.sizesResolved
+        )
+
         refreshDerivedCategories()
     }
 
@@ -701,23 +768,44 @@ final class LibraryScanCoordinator {
         stillLimit: Int,
         minBytes: Int64,
         displayLimit: Int
-    ) async -> [PhotoAsset]? {
-        let candidates = await library.fetchLargeFileCandidates(scope: scope, stillLimit: stillLimit)
-        guard !candidates.isEmpty else { return [] }
+    ) async -> BigFileFetch {
+        let fetch = await library.fetchLargeFileCandidates(scope: scope, stillLimit: stillLimit)
+        var result = BigFileFetch(
+            candidateSeconds: fetch.seconds,
+            candidatesEnumerated: fetch.enumerated
+        )
 
+        let candidates = fetch.assets
+        guard !candidates.isEmpty else {
+            result.assets = []
+            return result
+        }
+
+        let sizeStart = ContinuousClock.now
         let measurement = await library.fileSizes(for: candidates.map(\.id))
+        result.sizeSeconds = (ContinuousClock.now - sizeStart).inSeconds
+        // Denominator is the whole candidate pool, NOT just fresh measures:
+        // the question this phase answers is "what does resolving this pool
+        // cost", and the pool is bounded by config. A warm cache driving the
+        // per-candidate figure toward zero is the intended outcome here, not
+        // the measurement artefact that `ScanMetrics.sizeWalkSeconds` exists to
+        // avoid — there, the pass total stayed large while the fresh count
+        // collapsed; here both fall together.
+        result.sizesResolved = measurement.fromCache + measurement.measured
+
         // A truncated size map would silently shrink this category: an asset
         // with no measured size fails the `>= minBytes` test exactly as a small
-        // file does. Returning nil says "no answer" so the caller keeps the
-        // previous list, rather than publishing a confidently wrong shorter one.
-        guard measurement.isComplete else { return nil }
+        // file does. Leaving `assets` nil says "no answer" so the caller keeps
+        // the previous list, rather than publishing a confidently wrong one.
+        guard measurement.isComplete else { return result }
 
         let sizes = measurement.sizes
-        return candidates
+        result.assets = candidates
             .filter { (sizes[$0.id] ?? 0) >= minBytes }
             .sorted { (sizes[$0.id] ?? 0) > (sizes[$1.id] ?? 0) }
             .prefix(displayLimit)
             .map { $0 }
+        return result
     }
 
     /// Standalone stills that look soft. Conservative, RELATIVE, and

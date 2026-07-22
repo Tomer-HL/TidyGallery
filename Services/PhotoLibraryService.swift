@@ -242,9 +242,23 @@ final class PhotoLibraryService: @unchecked Sendable {
         return result
     }
 
+    /// A category fetch plus what it cost.
+    ///
+    /// The four metadata fetches run concurrently, so the coordinator cannot
+    /// time them from the outside — awaiting them in sequence would measure
+    /// how long each *waited*, not how long each *worked*. Each one therefore
+    /// times itself and reports back.
+    struct CategoryFetch: Sendable {
+        var assets: [PhotoAsset] = []
+        /// Wall clock inside the fetch itself.
+        var seconds: Double = 0
+        /// How many assets the underlying enumeration walked.
+        var enumerated: Int = 0
+    }
+
     /// Fetches all screenshots (newest first) from the system "Screenshots"
     /// smart album, as `Sendable` snapshots.
-    func fetchScreenshots(scope: ScanScope) async -> [PhotoAsset] {
+    func fetchScreenshots(scope: ScanScope) async -> CategoryFetch {
         assets(inSmartAlbum: .smartAlbumScreenshots, scope: scope)
     }
 
@@ -256,20 +270,26 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// parent takes of their child matched it perfectly. What actually makes a
     /// selfie is the front-facing camera, which iOS tracks and exposes here — so
     /// this is both more correct and free (no Vision pass needed).
-    func fetchSelfies(scope: ScanScope) async -> [PhotoAsset] {
+    func fetchSelfies(scope: ScanScope) async -> CategoryFetch {
         assets(inSmartAlbum: .smartAlbumSelfPortraits, scope: scope)
     }
 
     private func assets(
         inSmartAlbum subtype: PHAssetCollectionSubtype,
         scope: ScanScope
-    ) -> [PhotoAsset] {
+    ) -> CategoryFetch {
+        let start = ContinuousClock.now
         let albums = PHAssetCollection.fetchAssetCollections(
             with: .smartAlbum,
             subtype: subtype,
             options: nil
         )
-        guard let album = albums.firstObject else { return [] }
+        guard let album = albums.firstObject else {
+            // Still report the time: a missing smart album is itself a finding,
+            // and a phase that silently vanishes reads as "free" rather than
+            // "didn't happen".
+            return CategoryFetch(seconds: (ContinuousClock.now - start).inSeconds)
+        }
 
         let assets = PHAsset.fetchAssets(in: album, options: Self.options(scope: scope))
         var result: [PhotoAsset] = []
@@ -277,7 +297,27 @@ final class PhotoLibraryService: @unchecked Sendable {
         assets.enumerateObjects { asset, _, _ in
             result.append(Self.snapshot(asset))
         }
-        return result
+        return CategoryFetch(
+            assets: result,
+            seconds: (ContinuousClock.now - start).inSeconds,
+            enumerated: assets.count
+        )
+    }
+
+    /// Videos, the screen-recording subset, and the cost of each half.
+    struct VideoFetch: Sendable {
+        var videos: [PhotoAsset] = []
+        var recordings: [PhotoAsset] = []
+        /// Wall clock for the whole method.
+        var seconds: Double = 0
+        /// The `PHAssetResource` filename walk alone, separated out because it
+        /// is the one call here the size cache provably cannot help with: it
+        /// wants `originalFilename`, not `fileSize`. If this turns out to be
+        /// most of the method, the fix is a cached recording flag; if it's a
+        /// sliver, the enumeration itself is the problem and caching would have
+        /// been wasted work.
+        var filenameWalkSeconds: Double = 0
+        var enumerated: Int = 0
     }
 
     /// Videos **and** the subset that are screen recordings, in a single pass.
@@ -290,21 +330,33 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// (`RPReplay_Final…`). A recording the user renamed won't be detected —
     /// acceptable, since that only means it doesn't appear, never a false
     /// deletion.
-    func fetchVideosAndScreenRecordings(scope: ScanScope) async -> (videos: [PhotoAsset], recordings: [PhotoAsset]) {
+    func fetchVideosAndScreenRecordings(scope: ScanScope) async -> VideoFetch {
+        let start = ContinuousClock.now
         let assets = PHAsset.fetchAssets(with: .video, options: Self.options(scope: scope))
 
         var videos: [PhotoAsset] = []
         var recordings: [PhotoAsset] = []
+        var filenameWalkSeconds: Double = 0
         videos.reserveCapacity(assets.count)
 
         assets.enumerateObjects { asset, _, _ in
             let snapshot = Self.snapshot(asset)
             videos.append(snapshot)
+
+            let walkStart = ContinuousClock.now
             let isScreenRecording = PHAssetResource.assetResources(for: asset)
                 .contains { $0.originalFilename.lowercased().hasPrefix("rpreplay") }
+            filenameWalkSeconds += (ContinuousClock.now - walkStart).inSeconds
+
             if isScreenRecording { recordings.append(snapshot) }
         }
-        return (videos, recordings)
+        return VideoFetch(
+            videos: videos,
+            recordings: recordings,
+            seconds: (ContinuousClock.now - start).inSeconds,
+            filenameWalkSeconds: filenameWalkSeconds,
+            enumerated: assets.count
+        )
     }
 
     /// Candidate set for the "Big files" category: every Live Photo plus the
@@ -318,7 +370,8 @@ final class PhotoLibraryService: @unchecked Sendable {
     /// runtime). We snapshot into value types — releasing each `PHAsset` as the
     /// lazy enumeration advances, so peak memory stays bounded — then rank the
     /// (small) `PhotoAsset` snapshots by pixel area in memory.
-    func fetchLargeFileCandidates(scope: ScanScope, stillLimit: Int) async -> [PhotoAsset] {
+    func fetchLargeFileCandidates(scope: ScanScope, stillLimit: Int) async -> CategoryFetch {
+        let start = ContinuousClock.now
         let assets = PHAsset.fetchAssets(with: .image, options: Self.options(scope: scope, sorted: false))
 
         var livePhotos: [PhotoAsset] = []
@@ -339,7 +392,11 @@ final class PhotoLibraryService: @unchecked Sendable {
                 .prefix(stillLimit)
                 .map { $0 }
         }
-        return topByArea(livePhotos) + topByArea(stills)
+        return CategoryFetch(
+            assets: topByArea(livePhotos) + topByArea(stills),
+            seconds: (ContinuousClock.now - start).inSeconds,
+            enumerated: assets.count
+        )
     }
 
     /// Snapshots the fields we need from a live `PHAsset` into a `Sendable`

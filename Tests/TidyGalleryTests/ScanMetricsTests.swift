@@ -282,6 +282,106 @@ struct ScanMetricsTests {
         #expect(ScanMetrics.duration(125) == "2m 5s")
     }
 
+    // MARK: Per-asset cost
+
+    @Test("Assets seen accumulate alongside time, so per-asset cost is right")
+    func assetsSeenAccumulate() {
+        var metrics = ScanMetrics()
+        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.1, assetsSeen: 10)
+        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.1, assetsSeen: 10)
+
+        let phase = metrics.phases[0]
+        #expect(phase.assetsSeen == 20)
+        #expect(abs((phase.millisecondsPerAsset ?? 0) - 10.0) < 0.0001)
+    }
+
+    @Test("A phase that counts no assets reports no per-asset cost")
+    func perAssetCostNeedsAssets() {
+        var metrics = ScanMetrics()
+        // Clustering works on already-loaded snapshots — "per asset" is
+        // meaningless for it, and reporting 0.0 would read as "free".
+        metrics.record(ScanMetrics.Phase.clustering, seconds: 0.5)
+
+        #expect(metrics.phases[0].assetsSeen == 0)
+        #expect(metrics.phases[0].millisecondsPerAsset == nil)
+    }
+
+    @Test("Per-asset cost is what distinguishes a slow call from a wide query")
+    func perAssetCostSeparatesCauses() {
+        var metrics = ScanMetrics()
+        // Same duration, two very different problems: one call is expensive,
+        // the other is cheap but walked twenty times as much of the library.
+        metrics.record(ScanMetrics.Phase.recordingFilenameWalk, seconds: 1.0, assetsSeen: 100)
+        metrics.record(ScanMetrics.Phase.bigFileCandidates, seconds: 1.0, assetsSeen: 2_000)
+
+        #expect(abs((metrics.phases[0].millisecondsPerAsset ?? 0) - 10.0) < 0.0001)
+        #expect(abs((metrics.phases[1].millisecondsPerAsset ?? 0) - 0.5) < 0.0001)
+    }
+
+    @Test("The report shows per-asset cost only for phases that count assets")
+    func reportShowsPerAssetCost() {
+        var metrics = ScanMetrics()
+        metrics.record(ScanMetrics.Phase.videoFetch, seconds: 0.5, assetsSeen: 50)
+        metrics.record(ScanMetrics.Phase.clustering, seconds: 0.5)
+
+        let report = metrics.report()
+        #expect(report.contains("50 assets"))
+        #expect(report.contains("10.00 ms each"))
+        // The clustering line must not gain a bogus "[0 assets, 0.00 ms each]".
+        // Anchored on the opening bracket: a bare "0 assets" is a substring of
+        // "50 assets" and would fail against the *correct* line above.
+        #expect(!report.contains("[0 assets"))
+    }
+
+    @Test("A report from an older build still decodes, gaining defaults")
+    func decodesOlderReport() throws {
+        // Exactly what a pre-instrumentation build wrote: no assetsSeen on the
+        // phase, no size counters on the metrics. This must load rather than
+        // throw — losing it means losing the record of the scan that died.
+        let legacy = """
+        {
+          "scopeLabel": "Entire library",
+          "deviceSummary": "iPhone12,5",
+          "scopedAssetCount": 212,
+          "pagesProcessed": 2,
+          "cacheHits": 156,
+          "analysedFresh": 56,
+          "iCloudSkipped": 0,
+          "unavailable": 0,
+          "analysisFailures": 0,
+          "failureReasons": {},
+          "phases": [{"name": "Vision analysis", "totalSeconds": 12.0, "count": 56}],
+          "peakFootprintBytes": 55800000,
+          "memorySamples": 7,
+          "previousScanDidNotFinish": true
+        }
+        """
+
+        let restored = try JSONDecoder().decode(ScanMetrics.self, from: Data(legacy.utf8))
+
+        #expect(restored.scopedAssetCount == 212)
+        #expect(restored.cacheHits == 156)
+        #expect(restored.previousScanDidNotFinish)
+        #expect(restored.phases.count == 1)
+        #expect(restored.phases[0].assetsSeen == 0)       // defaulted, not thrown
+        #expect(restored.phases[0].millisecondsPerAsset == nil)
+        #expect(restored.sizesFromCache == 0)             // field didn't exist yet
+        #expect(restored.sizeWalkSeconds == 0)
+        #expect(restored.startedAt == nil)
+    }
+
+    @Test("Assets seen survive a round trip")
+    func assetsSeenEncode() throws {
+        var metrics = ScanMetrics()
+        metrics.record(ScanMetrics.Phase.selfieFetch, seconds: 0.2, assetsSeen: 7)
+
+        let restored = try JSONDecoder().decode(
+            ScanMetrics.self,
+            from: try JSONEncoder().encode(metrics)
+        )
+        #expect(restored.phases[0].assetsSeen == 7)
+    }
+
     // MARK: On-disk size accounting
 
     @Test("Size cache hit rate is measured against lookups, not photos scanned")
