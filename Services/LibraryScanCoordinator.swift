@@ -1383,6 +1383,15 @@ final class LibraryScanCoordinator {
                 if pageResult.visionSeconds > 0 {
                     metrics.record(ScanMetrics.Phase.vision, seconds: pageResult.visionSeconds)
                 }
+                // The split, when this was a fresh analysis. `assetsSeen: 1`
+                // so the report shows a per-photo cost for each piece — that,
+                // not the accumulated total, is what tells us where to cut.
+                if case let .analysed(result) = pageResult.outcome {
+                    let t = result.timings
+                    metrics.record(ScanMetrics.Phase.visionBatch, seconds: t.batchSeconds, assetsSeen: 1)
+                    metrics.record(ScanMetrics.Phase.visionAesthetics, seconds: t.aestheticsSeconds, assetsSeen: 1)
+                    metrics.record(ScanMetrics.Phase.visionSharpness, seconds: t.sharpnessSeconds, assetsSeen: 1)
+                }
                 if scanProgress % memorySampleInterval == 0 {
                     sampleMemory()
                     // Checkpoint here too, not only at the page boundary.

@@ -121,6 +121,22 @@ struct ScanMetrics: Sendable, Equatable, Codable {
         static let imageLoad = "Image load"
         /// Vision: feature print, faces, classification, aesthetics.
         static let vision = "Vision analysis"
+
+        // MARK: Vision, broken down
+        //
+        // Vision is ~96% of a first scan's serial cost and has been one opaque
+        // number. These split it so an optimisation is aimed by measurement, the
+        // way the metadata breakdown was. Like image load and Vision as a whole,
+        // these accumulate across a concurrent pool, so their sum exceeds wall
+        // clock — the per-asset column is the figure that matters.
+
+        /// The shared `handler.perform([...])`: feature print + faces +
+        /// classification + capture quality, in one pass.
+        static let visionBatch = "└ Vision request batch"
+        /// The aesthetics request, run as its own separate image pass.
+        static let visionAesthetics = "└ Aesthetics pass"
+        /// Variance-of-Laplacian sharpness — CPU, not Vision.
+        static let visionSharpness = "└ Sharpness (Laplacian)"
         /// Batched SwiftData write of new results.
         static let cacheWrite = "Cache write"
         /// Time-gate + feature-print clustering into stacks.

@@ -28,6 +28,24 @@ import Foundation
 import Vision
 import CoreGraphics
 
+/// Where the time went inside one `analyze` call.
+///
+/// Transient — never cached, only reported. Vision is 96% of a first scan's
+/// serial cost, and "Vision" has so far been one opaque number. Before cutting
+/// anything, split it: the point of this whole project has been that measured
+/// cost repeatedly contradicts the guess. These three are the natural seams —
+/// the shared request batch, the aesthetics pass that runs SEPARATELY (a second
+/// image ingestion per photo), and the CPU Laplacian.
+struct VisionTimings: Sendable {
+    /// The one `handler.perform([...])` shared by feature print, faces,
+    /// classification and capture quality.
+    var batchSeconds: Double = 0
+    /// `CalculateImageAestheticsScoresRequest`, run as its own pass.
+    var aestheticsSeconds: Double = 0
+    /// `BlurDetector.sharpness` — variance of Laplacian, on the CPU, not Vision.
+    var sharpnessSeconds: Double = 0
+}
+
 /// A fully-computed, `Sendable` analysis result for one image.
 struct AnalyzedImage: Sendable {
     let featurePrint: FeaturePrint
@@ -36,6 +54,9 @@ struct AnalyzedImage: Sendable {
     var sceneTags: Set<SceneCategory> = []
     /// The classifier's strongest labels, kept for the "Why this photo?" sheet.
     var labels: [ClassificationLabel] = []
+    /// How long the pieces took. Only set on a fresh analysis; a cache hit
+    /// leaves it zeroed, which is correct — a cache hit does no Vision work.
+    var timings = VisionTimings()
 }
 
 /// On-device image analysis. Reusable across the whole scan.
@@ -85,8 +106,11 @@ actor ImageAnalyzer {
         // doubled the Vision work per photo. Optional requests degrade in
         // order: drop capture quality first, then classification, keeping the
         // required pair last.
+        var timings = VisionTimings()
+
         var classificationSucceeded = true
         var captureQualitySucceeded = true
+        let batchStart = ContinuousClock.now
         do {
             try handler.perform([featurePrintRequest, faceRequest, classifyRequest, captureQualityRequest])
         } catch {
@@ -98,6 +122,7 @@ actor ImageAnalyzer {
                 try handler.perform([featurePrintRequest, faceRequest])
             }
         }
+        timings.batchSeconds = (ContinuousClock.now - batchStart).inSeconds
 
         guard
             let observation = featurePrintRequest.results?.first as? VNFeaturePrintObservation,
@@ -106,7 +131,10 @@ actor ImageAnalyzer {
             throw AnalyzerError.featurePrintUnavailable
         }
 
+        let sharpnessStart = ContinuousClock.now
         let sharpness = BlurDetector.sharpness(of: image)
+        timings.sharpnessSeconds = (ContinuousClock.now - sharpnessStart).inSeconds
+
         let faces = faceRequest.results as? [VNFaceObservation] ?? []
         // Capture quality comes from its own request's observations, which carry
         // `faceCaptureQuality` — the landmarks request's do not populate it.
@@ -116,7 +144,12 @@ actor ImageAnalyzer {
         let faceQuality = Self.evaluateFaces(faces, qualityFaces: qualityFaces)
 
         // On-device aesthetics via the newer async Vision request (best-effort).
+        // Timed apart because it is a SEPARATE image pass — the one clear
+        // candidate for folding into the batch above, if the split says it's
+        // worth it.
+        let aestheticsStart = ContinuousClock.now
         let aesthetics = await Self.aestheticsScore(for: image)
+        timings.aestheticsSeconds = (ContinuousClock.now - aestheticsStart).inSeconds
 
         // The strongest labels drive both the category tags and the "Why this
         // photo?" sheet, so compute them once.
@@ -144,7 +177,8 @@ actor ImageAnalyzer {
             featurePrint: print,
             score: score,
             sceneTags: sceneTags,
-            labels: topLabels
+            labels: topLabels,
+            timings: timings
         )
     }
 
