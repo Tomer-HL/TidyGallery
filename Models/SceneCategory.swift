@@ -93,6 +93,28 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
         return result
     }
 
+    /// Classifier tokens that mean "there are people in this photo", used as a
+    /// second people signal alongside face detection.
+    ///
+    /// Face detection runs on the ~512px analysis image, where a person who is
+    /// small in a wide scene — someone standing in a landscape, a face in a
+    /// crowd — is below the size the detector resolves. So scenic shots with
+    /// distant people slipped past the face veto. The scene CLASSIFIER sees the
+    /// whole frame and labels it "people" / "crowd" / "baby" regardless of how
+    /// large any one face is, which is exactly the gap face detection leaves.
+    private static let peopleTokens: Set<String> = [
+        "people", "person", "persons", "crowd", "audience", "portrait", "selfie",
+        "baby", "toddler", "infant", "child", "children",
+        "bride", "groom", "wedding"
+    ]
+
+    private static func labelsIndicatePeople(_ identifiers: [String]) -> Bool {
+        for identifier in identifiers where !peopleTokens.isDisjoint(with: tokens(of: identifier)) {
+            return true
+        }
+        return false
+    }
+
     /// The categories a photo actually belongs to, after the product rules that
     /// the raw token match can't express on its own.
     ///
@@ -101,8 +123,14 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     ///
     ///   - A person in the frame makes it a photo of the person. "A child eating
     ///     pizza" is not a food photo; "a family at the beach" is not a scenery
-    ///     photo. Faces therefore veto food, nature and documents. (Pets are
+    ///     photo. People therefore veto food, nature and documents. (Pets are
     ///     left alone — a person holding a cat is still a cat photo.)
+    ///
+    ///     "A person" is BOTH a detected face and a people label from the
+    ///     classifier, because neither catches every case: face detection misses
+    ///     small/distant people, and the classifier misses a lone face it reads
+    ///     as a portrait subject rather than a scene. Together they close most
+    ///     of the gap.
     ///
     ///   - A document is an indoor, flat, printed thing. A landscape is not one,
     ///     however much text a sign in it carries — so nature vetoes documents.
@@ -113,7 +141,8 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     static func refined(fromLabels labels: [String], hasFaces: Bool) -> Set<SceneCategory> {
         var tags = categories(forIdentifiers: labels)
 
-        if hasFaces {
+        let hasPeople = hasFaces || labelsIndicatePeople(labels)
+        if hasPeople {
             tags.remove(.food)
             tags.remove(.nature)
             tags.remove(.documents)

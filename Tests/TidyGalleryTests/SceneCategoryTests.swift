@@ -49,6 +49,31 @@ struct SceneCategoryTests {
         #expect(SceneCategory.refined(fromLabels: ["receipt"], hasFaces: false).contains(.documents))
     }
 
+    @Test("Distant people the face detector missed still veto nature")
+    func peopleLabelVetoesNatureWithoutAFace() {
+        // The real gap: a person small in a wide scene isn't resolved as a face
+        // on the 512px analysis image, so `hasFaces` is false — but the scene
+        // classifier still labels the frame "people"/"crowd".
+        #expect(!SceneCategory.refined(fromLabels: ["beach", "people"], hasFaces: false).contains(.nature))
+        #expect(!SceneCategory.refined(fromLabels: ["mountain", "crowd"], hasFaces: false).contains(.nature))
+        #expect(!SceneCategory.refined(fromLabels: ["landscape", "baby"], hasFaces: false).contains(.nature))
+    }
+
+    @Test("A people label vetoes food as well")
+    func peopleLabelVetoesFood() {
+        #expect(!SceneCategory.refined(fromLabels: ["pizza", "child"], hasFaces: false).contains(.food))
+    }
+
+    @Test("A pure landscape with no people signal stays nature")
+    func pureLandscapeStaysNature() {
+        #expect(SceneCategory.refined(fromLabels: ["mountain", "sky", "sunset"], hasFaces: false).contains(.nature))
+    }
+
+    @Test("People labels leave pets alone")
+    func peopleLabelDoesNotVetoPets() {
+        #expect(SceneCategory.refined(fromLabels: ["dog", "person"], hasFaces: false).contains(.pets))
+    }
+
     @Test("Pets survive a person in the frame")
     func facesDoNotVetoPets() {
         // A person holding a cat is still a cat photo.
