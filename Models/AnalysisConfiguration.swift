@@ -189,6 +189,22 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// keyword match is coincidence rather than content.
     var sceneClassificationTopLabels: Int = 5
 
+    /// A label assigns a content category only when its confidence is at least
+    /// this fraction of the photo's STRONGEST label.
+    ///
+    /// Separate from `sceneClassificationMinConfidence`, which governs which
+    /// labels are stored for the "Why this photo?" sheet — a label worth showing
+    /// (0.15+) is not necessarily one worth categorising on. A document the
+    /// classifier was 90% sure of, carrying an incidental 38% "sky", was being
+    /// filed under Nature: 0.38 is 42% of 0.90, below this floor, so the sky no
+    /// longer counts. Relative rather than absolute because the classifier
+    /// spreads confidence unevenly from photo to photo.
+    var categoryConfidenceRelativeFloor: Float = 0.5
+
+    /// …and never below this in absolute terms, so a photo whose top label is
+    /// itself weak can't let an even weaker one through on the ratio alone.
+    var categoryConfidenceAbsoluteFloor: Float = 0.3
+
 
     static let `default` = AnalysisConfiguration()
 }

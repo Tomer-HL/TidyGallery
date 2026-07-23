@@ -138,10 +138,28 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     ///
     /// Computed from stored data (labels + face count), NOT baked into the
     /// cache, so these rules can be tuned without re-analysing the library.
-    static func refined(fromLabels labels: [String], hasFaces: Bool) -> Set<SceneCategory> {
-        var tags = categories(forIdentifiers: labels)
+    ///
+    /// Confidence-aware. Real-device output showed a document photo — the
+    /// classifier 90% sure it was a Document — filed under Nature because it also
+    /// drew a 38% "sky". Identifier-only matching gave that 38% label the same
+    /// weight as the 90% one. This classifier "spreads confidence across a very
+    /// large taxonomy", so weak incidental labels are the norm, not the
+    /// exception. A label therefore only assigns a category when it is strong
+    /// RELATIVE to the photo's own top label — which adapts to that spread
+    /// rather than fighting it with a fixed cutoff.
+    static func refined(
+        from labels: [ClassificationLabel],
+        hasFaces: Bool,
+        relativeFloor: Float = 0.5,
+        absoluteFloor: Float = 0.3
+    ) -> Set<SceneCategory> {
+        let topConfidence = labels.map(\.confidence).max() ?? 0
+        let floor = max(absoluteFloor, topConfidence * relativeFloor)
+        let strong = labels.filter { $0.confidence >= floor }.map(\.identifier)
 
-        let hasPeople = hasFaces || labelsIndicatePeople(labels)
+        var tags = categories(forIdentifiers: strong)
+
+        let hasPeople = hasFaces || labelsIndicatePeople(strong)
         if hasPeople {
             tags.remove(.food)
             tags.remove(.nature)
@@ -151,5 +169,16 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
             tags.remove(.documents)
         }
         return tags
+    }
+
+    /// Identifier-only convenience for callers and tests that don't carry
+    /// confidence — every label is treated as equally, fully confident, so the
+    /// relative floor passes them all and the behaviour is the plain token map
+    /// plus the vetoes.
+    static func refined(fromLabels labels: [String], hasFaces: Bool) -> Set<SceneCategory> {
+        refined(
+            from: labels.map { ClassificationLabel(identifier: $0, confidence: 1) },
+            hasFaces: hasFaces
+        )
     }
 }

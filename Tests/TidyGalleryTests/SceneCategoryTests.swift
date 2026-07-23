@@ -80,6 +80,50 @@ struct SceneCategoryTests {
         #expect(SceneCategory.refined(fromLabels: ["cat"], hasFaces: true).contains(.pets))
     }
 
+    // MARK: Confidence-aware assignment
+
+    private func label(_ id: String, _ confidence: Float) -> ClassificationLabel {
+        ClassificationLabel(identifier: id, confidence: confidence)
+    }
+
+    @Test("A weak incidental label doesn't override a strong one")
+    func weakLabelDoesNotAssignCategory() {
+        // The exact real-device case: a document photo the classifier was 90%
+        // sure of, carrying a 38% "sky", was landing in Nature.
+        let tags = SceneCategory.refined(
+            from: [
+                label("document", 0.90),
+                label("screenshot", 0.90),
+                label("outdoor", 0.38),
+                label("night_sky", 0.38),
+                label("sky", 0.38)
+            ],
+            hasFaces: false
+        )
+        #expect(tags.contains(.documents))
+        #expect(!tags.contains(.nature), "38% sky must not tag a 90%-document photo as nature")
+    }
+
+    @Test("A genuine sunset, where the nature label IS the strong one, stays nature")
+    func strongNatureLabelIsKept() {
+        let tags = SceneCategory.refined(
+            from: [label("sunset", 0.71), label("sky", 0.55), label("ocean", 0.34)],
+            hasFaces: false
+        )
+        #expect(tags.contains(.nature))
+    }
+
+    @Test("A weak people label can't empty a strong nature scene")
+    func weakPeopleLabelDoesNotVetoStrongNature() {
+        // Guards the opposite failure: over-vetoing. A 20% "person" on a photo
+        // the classifier is 80% sure is a mountain shouldn't strip it from Nature.
+        let tags = SceneCategory.refined(
+            from: [label("mountain", 0.80), label("person", 0.20)],
+            hasFaces: false
+        )
+        #expect(tags.contains(.nature))
+    }
+
     @Test("A nature scene is never a document")
     func natureVetoesDocuments() {
         // The exact real-device error: mountains + a sign filed under Documents.

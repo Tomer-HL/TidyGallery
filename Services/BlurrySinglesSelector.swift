@@ -74,8 +74,10 @@ struct BlurrySinglesSelector {
     private func isSharpButLowTexture(_ asset: PhotoAsset) -> Bool {
         let hasFaces = (asset.score?.faceQuality.faceCount ?? 0) > 0
         let tags = SceneCategory.refined(
-            fromLabels: asset.classificationLabels.map(\.identifier),
-            hasFaces: hasFaces
+            from: asset.classificationLabels,
+            hasFaces: hasFaces,
+            relativeFloor: config.categoryConfidenceRelativeFloor,
+            absoluteFloor: config.categoryConfidenceAbsoluteFloor
         )
         if tags.contains(.nature) { return true }
 
