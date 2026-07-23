@@ -10,7 +10,16 @@
 import SwiftUI
 
 struct ReviewScreen: View {
-    @State private var model: ReviewModel
+    /// The review model, OWNED BY the coordinator, not by this view.
+    ///
+    /// Deliberately a plain `let`, not `@State`. `@State` would make the view
+    /// take ownership and re-seed it from the initial value each time the view
+    /// is reconstructed — which, for a `NavigationLink` destination, is every
+    /// time you navigate back to it. That is exactly the bug this replaced.
+    /// A `let` reference to an `@Observable` object is still fully observed, so
+    /// checkboxes and best-shot changes drive updates as before; the difference
+    /// is only that the state lives somewhere that survives the pop.
+    let model: ReviewModel
     @Environment(\.photoLibrary) private var library
     /// Called after a successful deletion so the coordinator can reconcile the
     /// home counts and other category screens immediately.
@@ -89,13 +98,13 @@ struct ReviewScreen: View {
     }
 
     init(
-        stacks: [PhotoStack],
+        model: ReviewModel,
         onDeleted: @escaping ([PhotoAsset.ID]) -> Void = { _ in },
         onIgnore: (([PhotoAsset.ID]) -> Void)? = nil,
         onAutoKeep: (([PhotoAsset.ID]) -> Void)? = nil,
         onStopIgnoring: (() -> Void)? = nil
     ) {
-        _model = State(initialValue: ReviewModel(stacks: stacks))
+        self.model = model
         self.onDeleted = onDeleted
         self.onIgnore = onIgnore
         self.onAutoKeep = onAutoKeep

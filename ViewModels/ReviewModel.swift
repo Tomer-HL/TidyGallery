@@ -94,13 +94,62 @@ final class ReviewModel {
     private(set) var assetSizes: [PhotoAsset.ID: Int64] = [:]
 
     init(stacks: [PhotoStack]) {
-        self.stacks = stacks.map { stack in
-            Stack(
-                id: stack.id,
-                assets: stack.assets,
-                rankedIDs: stack.rankedAssetIDs,
-                bestShotID: stack.bestShotID,
-                checkedForDeletion: stack.assetsPreselectedForDeletion
+        self.stacks = stacks.map(Self.freshStack)
+    }
+
+    /// A review stack built from the scan's defaults, with nothing edited yet.
+    private static func freshStack(from stack: PhotoStack) -> Stack {
+        Stack(
+            id: stack.id,
+            assets: stack.assets,
+            rankedIDs: stack.rankedAssetIDs,
+            bestShotID: stack.bestShotID,
+            checkedForDeletion: stack.assetsPreselectedForDeletion
+        )
+    }
+
+    /// Brings the model in line with a new set of stacks while keeping every
+    /// choice the user has already made.
+    ///
+    /// The problem this solves: `PhotoStack.id` is a fresh `UUID` on each
+    /// rebuild, so it can't be used to recognise a group across rebuilds. But a
+    /// group's *membership* — the set of asset ids in it — is stable, and
+    /// uniquely identifies it (asset ids are globally unique). So edits are
+    /// matched by membership: a stack whose members are unchanged keeps its
+    /// ticks and its chosen best shot; a genuinely new or changed group gets the
+    /// scan's default suggestion.
+    ///
+    /// This runs on every `stacks` change on the coordinator, which is what lets
+    /// the review screen grow with a progressive scan and survive a background
+    /// re-cluster without ever resetting the user's work.
+    func reconcile(with photoStacks: [PhotoStack]) {
+        func membershipKey(_ ids: [PhotoAsset.ID]) -> String {
+            ids.sorted().joined(separator: "|")
+        }
+
+        // Index the user's current edits by membership. `uniquingKeysWith`
+        // rather than the trapping initialiser: two stacks can't normally share
+        // a member, but a crash would be a steep price for that assumption.
+        let edited = Dictionary(
+            stacks.map { (membershipKey($0.assets.map(\.id)), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        stacks = photoStacks.map { incoming in
+            guard let prior = edited[membershipKey(incoming.assets.map(\.id))] else {
+                return Self.freshStack(from: incoming)   // new or changed group
+            }
+            // Same group, seen before — carry the edits forward, clamped to the
+            // assets that still exist (belt-and-braces: identical membership
+            // means the clamp is a no-op, but it can't hurt and guards the day
+            // membership drifts without changing the key).
+            let live = Set(incoming.assets.map(\.id))
+            return Stack(
+                id: incoming.id,
+                assets: incoming.assets,
+                rankedIDs: incoming.rankedAssetIDs,
+                bestShotID: live.contains(prior.bestShotID) ? prior.bestShotID : incoming.bestShotID,
+                checkedForDeletion: prior.checkedForDeletion.intersection(live)
             )
         }
     }

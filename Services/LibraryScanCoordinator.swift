@@ -80,7 +80,22 @@ final class LibraryScanCoordinator {
     }
 
     private(set) var phase: Phase = .idle
-    private(set) var stacks: [PhotoStack] = []
+
+    /// The duplicate groups, rebuilt whenever analysis changes them.
+    ///
+    /// The `didSet` keeps the shared review model in step with them. Stacks
+    /// change under the user's feet in several ways — the progressive scan grows
+    /// the set page by page, a deletion prunes it, an external library edit
+    /// re-clusters it — and the review screen must reflect every one WITHOUT
+    /// discarding the choices the user has already made. Reconciling here is the
+    /// single choke point that does both; see `ReviewModel.reconcile(with:)`.
+    ///
+    /// Safe against SwiftUI's "modifying state during update": stacks are only
+    /// ever assigned from the coordinator's own methods (scan, prune, recompute),
+    /// never from a view body, so this observer never fires mid-render.
+    private(set) var stacks: [PhotoStack] = [] {
+        didSet { _reviewModel?.reconcile(with: stacks) }
+    }
 
     // MARK: Standalone cleanup categories (Phase 3)
     //
@@ -284,6 +299,44 @@ final class LibraryScanCoordinator {
         self.config = tuning.applied()
     }
 
+    // MARK: - Review model (owned here so edits survive navigation)
+
+    /// The duplicate-review edit state, kept ALIVE across navigation.
+    ///
+    /// This was the bug behind "I sorted 200 photos, went back, and my choices
+    /// were gone". `ReviewScreen` used to build its own `ReviewModel` in
+    /// `@State` from the scan's default suggestions. But that screen is a
+    /// `NavigationLink` destination, so popping it destroys its `@State`;
+    /// returning re-ran the initialiser and rebuilt the model from the same
+    /// untouched defaults. Every deletion tick and best-shot change lived only
+    /// in the view and died with it.
+    ///
+    /// The coordinator outlives navigation, so the edit state belongs here. It
+    /// is rebuilt only when the suggestions themselves are — a fresh scan — via
+    /// `invalidateReview()`; merely walking away and back returns the same
+    /// instance, edits intact.
+    ///
+    /// `@ObservationIgnored` because the view observes the `ReviewModel` itself
+    /// (it is `@Observable`); the coordinator must not re-render everything just
+    /// because this reference was first assigned.
+    @ObservationIgnored private var _reviewModel: ReviewModel?
+
+    /// The shared review model, built on first use from the current stacks.
+    var reviewModel: ReviewModel {
+        if let _reviewModel { return _reviewModel }
+        let model = ReviewModel(stacks: stacks)
+        _reviewModel = model
+        return model
+    }
+
+    /// Discards the review model so the next access rebuilds it from fresh
+    /// suggestions. Called when a new scan begins — new analysis means new
+    /// proposals, and carrying the previous run's ticks into them would be
+    /// meaningless. Ordinary navigation never calls this.
+    private func invalidateReview() {
+        _reviewModel = nil
+    }
+
     // MARK: - Public entry point
 
     /// Runs a full scan and publishes the resulting stacks. Safe to call again;
@@ -319,6 +372,10 @@ final class LibraryScanCoordinator {
 
         // Access is settled — move off "Requesting photo access…" immediately.
         phase = .scanning(analysed: 0, total: 0)
+
+        // A new scan produces new suggestions, so any in-progress review of the
+        // old ones is discarded here rather than silently carried over.
+        invalidateReview()
 
         // Load the user's "never suggest this again" decisions up front so every
         // category built below can exclude them.

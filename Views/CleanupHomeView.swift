@@ -451,7 +451,7 @@ struct CleanupHomeView: View {
             countLabel: ItemNoun.group.counted(coordinator.stacks.count)
         ) {
             ReviewScreen(
-                stacks: coordinator.stacks,
+                model: coordinator.reviewModel,
                 onDeleted: { coordinator.noteDeleted(ids: $0) },
                 onIgnore: { ids in Task { await coordinator.ignore(ids: ids) } },
                 // The implicit keep after a deletion, and its reversal. Routed
