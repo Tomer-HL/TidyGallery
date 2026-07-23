@@ -116,6 +116,18 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// Hard cap on how many photos "Possibly blurry" ever surfaces.
     var blurryMaxCount: Int = 200
 
+    /// A photo the aesthetics model rates at or above this is never called
+    /// "possibly blurry", however low its Laplacian sharpness.
+    ///
+    /// Variance-of-Laplacian measures *detail*, not focus, so a sharp but smooth
+    /// scene — a sunset, an open sky, a plain wall — scores as low as a genuinely
+    /// blurry one. Real device output was a Possibly-blurry list full of sunsets.
+    /// A blurry photo is also an *unpleasant* one, so the aesthetics score
+    /// separates the two: it is high for the sharp sunset and low for the blur.
+    /// `0.5` is the model's neutral point (its native `[-1, 1]` mapped to
+    /// `[0, 1]`), so this excludes anything the model likes at all.
+    var blurryExcludeAestheticsAtOrAbove: Double = 0.5
+
     // MARK: Analysis cost
 
     /// The square bound, in pixels, that photos are downscaled to before

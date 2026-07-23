@@ -19,15 +19,71 @@ struct BlurrySinglesSelectorTests {
     private func asset(
         id: String,
         sharpness: Double,
-        favorite: Bool = false
+        favorite: Bool = false,
+        aesthetics: Double? = nil,
+        labels: [String] = []
     ) -> PhotoAsset {
-        PhotoAsset.make(
+        var a = PhotoAsset.make(
             id: id,
             secondsFromEpoch: 0,
             favorite: favorite,
             featurePrint: FeaturePrint(vector: [1, 0]),
-            score: .plain(sharpness: sharpness, favorite: favorite)
+            score: .plain(sharpness: sharpness, aesthetics: aesthetics, favorite: favorite)
         )
+        a.classificationLabels = labels.map { ClassificationLabel(identifier: $0, confidence: 0.9) }
+        return a
+    }
+
+    // MARK: Sharp-but-low-texture exclusions
+    //
+    // Real device output surfaced a Possibly-blurry list full of sunsets and
+    // otherwise good photos. Variance-of-Laplacian measures detail, not focus,
+    // so a smooth in-focus scene scores as low as a genuine blur. These lock the
+    // two signals that tell them apart.
+
+    @Test("A sharp sunset is not surfaced as blurry")
+    func natureSceneIsNotBlurry() {
+        // Low sharpness (smooth sky), but tagged nature and no faces.
+        let sunset = asset(id: "sunset", sharpness: 0.001, labels: ["sunset"])
+        let realBlur = asset(id: "blur", sharpness: 0.001, labels: ["indoor"])
+
+        let selected = BlurrySinglesSelector(config: .default)
+            .select(from: [sunset, realBlur])
+            .map(\.id)
+
+        #expect(!selected.contains("sunset"))
+        #expect(selected.contains("blur"))
+    }
+
+    @Test("A good-looking photo is not surfaced as blurry")
+    func highAestheticsIsNotBlurry() {
+        // Same low sharpness; the aesthetics model likes one and not the other.
+        let pretty = asset(id: "pretty", sharpness: 0.001, aesthetics: 0.8)
+        let ugly = asset(id: "ugly", sharpness: 0.001, aesthetics: 0.2)
+
+        let selected = BlurrySinglesSelector(config: .default)
+            .select(from: [pretty, ugly])
+            .map(\.id)
+
+        #expect(!selected.contains("pretty"))
+        #expect(selected.contains("ugly"))
+    }
+
+    @Test("A scenic shot with a person in it is judged on its own texture")
+    func sceneWithPersonIsNotSparedByNatureRule() {
+        // A face means the nature tag is vetoed, so this photo isn't excluded on
+        // "it's scenery" grounds — but a real person adds texture, so a genuinely
+        // blurry one should still be catchable. Here it has no rescuing signal.
+        var withPerson = asset(id: "person", sharpness: 0.001, labels: ["beach"])
+        withPerson.score = ShotScore(
+            sharpness: 0.001, aesthetics: 0.2,
+            faceQuality: FaceQuality(faceCount: 1, eyesOpenScore: 0.5, smileScore: 0.5),
+            isFavorite: false
+        )
+        let selected = BlurrySinglesSelector(config: .default)
+            .select(from: [withPerson])
+            .map(\.id)
+        #expect(selected.contains("person"))
     }
 
     @Test("A uniformly soft library is still bounded by the percentile")

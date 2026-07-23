@@ -45,16 +45,21 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
         case .pets:
             return ["dog", "cat", "puppy", "kitten", "kitty", "pet", "pets"]
         case .documents:
-            // Deliberately narrow. An earlier version included "print", "card",
-            // "label", "sign", "poster", "letter" and "note" — generic enough
-            // that an ordinary photo of a room matched one of them and was filed
-            // as a document. A word only belongs here if a photo containing it
-            // is almost certainly a document.
+            // Deliberately narrow, and narrowed again after real-device testing
+            // filed product boxes and fabric swatches as documents. Two tokens
+            // were pulled for leaking onto packaging: "book" matched "book
+            // jacket" (Vision's label for a printed box/sleeve), and "page" is
+            // generic enough to catch any flat printed surface. "menu" is kept
+            // but it is the next-weakest — it also fires on product labels.
+            //
+            // Keyword matching on a general classifier can only get documents so
+            // far: a cereal box genuinely does contain text. The face and nature
+            // vetoes in `refined(fromLabels:hasFaces:)` remove the rest of the
+            // visible errors (people, scenery), which is most of them.
             return [
                 "document", "documents", "text", "paper", "receipt", "menu",
                 "invoice", "whiteboard", "newspaper",
-                // A photographed book or notebook page.
-                "book", "books", "page", "handwriting", "handwritten", "notebook"
+                "books", "handwriting", "handwritten", "notebook"
             ]
         case .nature:
             return [
@@ -75,7 +80,7 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
     }
 
     /// Maps a set of confident classification identifiers to the high-level
-    /// categories they imply.
+    /// categories they imply. The RAW mapping — token match only.
     static func categories(forIdentifiers identifiers: [String]) -> Set<SceneCategory> {
         var result: Set<SceneCategory> = []
         for identifier in identifiers {
@@ -86,5 +91,36 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
             }
         }
         return result
+    }
+
+    /// The categories a photo actually belongs to, after the product rules that
+    /// the raw token match can't express on its own.
+    ///
+    /// The classifier answers "what is in this frame". The categories answer
+    /// "what is this a photo OF", which is a different question:
+    ///
+    ///   - A person in the frame makes it a photo of the person. "A child eating
+    ///     pizza" is not a food photo; "a family at the beach" is not a scenery
+    ///     photo. Faces therefore veto food, nature and documents. (Pets are
+    ///     left alone — a person holding a cat is still a cat photo.)
+    ///
+    ///   - A document is an indoor, flat, printed thing. A landscape is not one,
+    ///     however much text a sign in it carries — so nature vetoes documents.
+    ///     This alone fixes the mountains-filed-as-a-document case.
+    ///
+    /// Computed from stored data (labels + face count), NOT baked into the
+    /// cache, so these rules can be tuned without re-analysing the library.
+    static func refined(fromLabels labels: [String], hasFaces: Bool) -> Set<SceneCategory> {
+        var tags = categories(forIdentifiers: labels)
+
+        if hasFaces {
+            tags.remove(.food)
+            tags.remove(.nature)
+            tags.remove(.documents)
+        }
+        if tags.contains(.nature) {
+            tags.remove(.documents)
+        }
+        return tags
     }
 }

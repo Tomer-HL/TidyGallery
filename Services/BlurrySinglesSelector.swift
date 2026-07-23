@@ -39,6 +39,7 @@ struct BlurrySinglesSelector {
                 && !asset.isFavorite
                 && !excludedIDs.contains(asset.id)
                 && asset.score != nil
+                && !isSharpButLowTexture(asset)
         }
         guard !eligible.isEmpty else { return [] }
 
@@ -55,5 +56,33 @@ struct BlurrySinglesSelector {
             .sorted { ($0.score?.sharpness ?? 0) < ($1.score?.sharpness ?? 0) }
             .prefix(config.blurryMaxCount)
             .map { $0 }
+    }
+
+    /// Whether a photo is low-sharpness because of its CONTENT, not its focus —
+    /// the two things variance-of-Laplacian can't tell apart.
+    ///
+    /// Two independent signals, either of which is enough to spare a photo from
+    /// "possibly blurry":
+    ///
+    ///   - It's a nature/scenery scene. Sunsets, skies and landscapes are smooth
+    ///     by nature and score low on Laplacian sharpness while being in perfect
+    ///     focus. (Refined tags, so a scenic shot WITH a person in it isn't
+    ///     spared on these grounds — but such a photo has texture from the person
+    ///     anyway.)
+    ///   - The aesthetics model rates it well. A blurry photo is an unpleasant
+    ///     one; a good-looking photo is not what the user means by blurry.
+    private func isSharpButLowTexture(_ asset: PhotoAsset) -> Bool {
+        let hasFaces = (asset.score?.faceQuality.faceCount ?? 0) > 0
+        let tags = SceneCategory.refined(
+            fromLabels: asset.classificationLabels.map(\.identifier),
+            hasFaces: hasFaces
+        )
+        if tags.contains(.nature) { return true }
+
+        if let aesthetics = asset.score?.aesthetics,
+           aesthetics >= config.blurryExcludeAestheticsAtOrAbove {
+            return true
+        }
+        return false
     }
 }

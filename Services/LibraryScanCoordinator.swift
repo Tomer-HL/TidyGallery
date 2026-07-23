@@ -1005,8 +1005,22 @@ final class LibraryScanCoordinator {
     private func photosTagged(_ category: SceneCategory) -> [PhotoAsset] {
         suggestable(
             analysedAssets
-                .filter { $0.mediaType == .image && $0.sceneTags.contains(category) }
+                .filter { $0.mediaType == .image && Self.refinedTags(of: $0).contains(category) }
                 .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        )
+    }
+
+    /// A photo's content categories under the current product rules, recomputed
+    /// from the RAW stored signals rather than the tags baked at analysis time.
+    ///
+    /// This is what makes the classification fixes free of a rescan: the
+    /// classifier's labels and the face count were already cached, so refining
+    /// which categories they imply is a pure re-derivation. `sceneTags` on the
+    /// asset is left as the raw record; this is the product view of it.
+    static func refinedTags(of asset: PhotoAsset) -> Set<SceneCategory> {
+        SceneCategory.refined(
+            fromLabels: asset.classificationLabels.map(\.identifier),
+            hasFaces: (asset.score?.faceQuality.faceCount ?? 0) > 0
         )
     }
 

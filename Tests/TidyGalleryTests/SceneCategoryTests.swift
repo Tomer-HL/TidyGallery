@@ -26,6 +26,54 @@ struct SceneCategoryTests {
         #expect(SceneCategory.categories(forIdentifiers: ["cat"]).contains(.pets))
     }
 
+    // MARK: Refined categories — "what is this a photo OF"
+    //
+    // Real device output filed people-photos under Food and Nature, and product
+    // boxes and mountains under Documents. These lock the product rules that fix
+    // that, working from the same signals the app has cached.
+
+    @Test("A person in the frame vetoes food, nature and documents")
+    func facesVetoContentCategories() {
+        // Kid eating pizza → the classifier sees pizza, but it's a photo of the kid.
+        #expect(!SceneCategory.refined(fromLabels: ["pizza"], hasFaces: true).contains(.food))
+        // Family at the beach → sees beach, but it's a photo of the family.
+        #expect(!SceneCategory.refined(fromLabels: ["beach"], hasFaces: true).contains(.nature))
+        // A person holding a page → not a document photo.
+        #expect(!SceneCategory.refined(fromLabels: ["document"], hasFaces: true).contains(.documents))
+    }
+
+    @Test("Without faces, content categories still apply")
+    func noFacesKeepsCategories() {
+        #expect(SceneCategory.refined(fromLabels: ["pizza"], hasFaces: false).contains(.food))
+        #expect(SceneCategory.refined(fromLabels: ["sunset"], hasFaces: false).contains(.nature))
+        #expect(SceneCategory.refined(fromLabels: ["receipt"], hasFaces: false).contains(.documents))
+    }
+
+    @Test("Pets survive a person in the frame")
+    func facesDoNotVetoPets() {
+        // A person holding a cat is still a cat photo.
+        #expect(SceneCategory.refined(fromLabels: ["cat"], hasFaces: true).contains(.pets))
+    }
+
+    @Test("A nature scene is never a document")
+    func natureVetoesDocuments() {
+        // The exact real-device error: mountains + a sign filed under Documents.
+        let tags = SceneCategory.refined(fromLabels: ["mountain", "text"], hasFaces: false)
+        #expect(tags.contains(.nature))
+        #expect(!tags.contains(.documents))
+    }
+
+    @Test("The packaging-leaking document tokens are gone")
+    func packagingTokensNoLongerDocuments() {
+        // "book jacket" is Vision's label for a printed box/sleeve — a Nautica
+        // bedding box, a fabric-swatch card. It must not read as a document.
+        #expect(!SceneCategory.categories(forIdentifiers: ["book jacket"]).contains(.documents))
+        #expect(!SceneCategory.categories(forIdentifiers: ["book"]).contains(.documents))
+        // A genuine document token still works.
+        #expect(SceneCategory.categories(forIdentifiers: ["receipt"]).contains(.documents))
+        #expect(SceneCategory.categories(forIdentifiers: ["notebook"]).contains(.documents))
+    }
+
     @Test("Document labels map to .documents")
     func documentMapping() {
         #expect(SceneCategory.categories(forIdentifiers: ["receipt"]).contains(.documents))
