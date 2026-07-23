@@ -1022,7 +1022,8 @@ final class LibraryScanCoordinator {
             from: asset.classificationLabels,
             hasFaces: (asset.score?.faceQuality.faceCount ?? 0) > 0,
             relativeFloor: config.categoryConfidenceRelativeFloor,
-            absoluteFloor: config.categoryConfidenceAbsoluteFloor
+            absoluteFloor: config.categoryConfidenceAbsoluteFloor,
+            peopleFloor: config.peopleVetoMinConfidence
         )
     }
 

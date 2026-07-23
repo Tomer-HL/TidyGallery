@@ -113,12 +113,46 @@ struct SceneCategoryTests {
         #expect(tags.contains(.nature))
     }
 
-    @Test("A weak people label can't empty a strong nature scene")
-    func weakPeopleLabelDoesNotVetoStrongNature() {
-        // Guards the opposite failure: over-vetoing. A 20% "person" on a photo
-        // the classifier is 80% sure is a mountain shouldn't strip it from Nature.
+    @Test("A stray 20% person can't empty a strong nature scene")
+    func strayPeopleLabelDoesNotVetoStrongNature() {
+        // Guards the over-veto direction: a 20% "person" is below the people
+        // floor (0.25), so an 80%-mountain scene stays Nature.
         let tags = SceneCategory.refined(
             from: [label("mountain", 0.80), label("person", 0.20)],
+            hasFaces: false
+        )
+        #expect(tags.contains(.nature))
+    }
+
+    @Test("A weak-but-real people label still vetoes nature")
+    func weakPeopleLabelVetoesNatureWhenAboveFloor() {
+        // The regression this fixed: a "crowd" that's weak next to a dominant
+        // "concert" was being filtered out by the strict category floor before
+        // the people check ever saw it, leaving crowds in Nature. People are
+        // judged eagerly now — 0.3 is above the people floor even though it's
+        // far below the 0.9 top label.
+        let tags = SceneCategory.refined(
+            from: [label("concert", 0.90), label("stage", 0.60), label("crowd", 0.30)],
+            hasFaces: false
+        )
+        #expect(!tags.contains(.nature))
+    }
+
+    @Test("A car photographed against scenery is not nature")
+    func vehicleVetoesNature() {
+        // Real case: a car shot outdoors picks up "outdoor"/"tree" from behind it.
+        #expect(!SceneCategory.refined(
+            from: [label("car", 0.85), label("tree", 0.40), label("outdoor", 0.38)],
+            hasFaces: false
+        ).contains(.nature))
+    }
+
+    @Test("A distant car in a vista doesn't strip the vista")
+    func weakVehicleDoesNotVetoNature() {
+        // Vehicles are judged on the strong labels: a car weak next to a
+        // dominant mountain is incidental, and the vista stays Nature.
+        let tags = SceneCategory.refined(
+            from: [label("mountain", 0.80), label("car", 0.30)],
             hasFaces: false
         )
         #expect(tags.contains(.nature))

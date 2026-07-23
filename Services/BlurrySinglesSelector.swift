@@ -77,7 +77,8 @@ struct BlurrySinglesSelector {
             from: asset.classificationLabels,
             hasFaces: hasFaces,
             relativeFloor: config.categoryConfidenceRelativeFloor,
-            absoluteFloor: config.categoryConfidenceAbsoluteFloor
+            absoluteFloor: config.categoryConfidenceAbsoluteFloor,
+            peopleFloor: config.peopleVetoMinConfidence
         )
         if tags.contains(.nature) { return true }
 

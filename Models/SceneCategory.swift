@@ -115,6 +115,26 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
         return false
     }
 
+    /// Classifier tokens that mean "a vehicle is the subject". A car
+    /// photographed outdoors picks up "outdoor"/"tree" from whatever is behind
+    /// it and lands in scenery — but a photo OF a car is no more a landscape
+    /// than a photo of a person is. So a prominent vehicle vetoes nature too.
+    ///
+    /// Judged on the STRONG labels (unlike people, which is judged eagerly),
+    /// because a car should be the subject to count: a distant car in a genuine
+    /// vista shouldn't strip the vista out of Nature.
+    private static let vehicleTokens: Set<String> = [
+        "car", "cars", "vehicle", "automobile", "truck", "motorcycle",
+        "motorbike", "scooter", "bus", "van", "jeep", "suv"
+    ]
+
+    private static func labelsIndicateVehicle(_ identifiers: [String]) -> Bool {
+        for identifier in identifiers where !vehicleTokens.isDisjoint(with: tokens(of: identifier)) {
+            return true
+        }
+        return false
+    }
+
     /// The categories a photo actually belongs to, after the product rules that
     /// the raw token match can't express on its own.
     ///
@@ -151,20 +171,36 @@ enum SceneCategory: String, Sendable, Codable, Hashable, CaseIterable {
         from labels: [ClassificationLabel],
         hasFaces: Bool,
         relativeFloor: Float = 0.5,
-        absoluteFloor: Float = 0.3
+        absoluteFloor: Float = 0.3,
+        peopleFloor: Float = 0.25
     ) -> Set<SceneCategory> {
         let topConfidence = labels.map(\.confidence).max() ?? 0
-        let floor = max(absoluteFloor, topConfidence * relativeFloor)
-        let strong = labels.filter { $0.confidence >= floor }.map(\.identifier)
+        let categoryFloor = max(absoluteFloor, topConfidence * relativeFloor)
 
+        // Category assignment is STRICT: a token counts only if it's strong
+        // relative to the photo's top label, so a weak incidental "sky" can't
+        // tag a document as nature.
+        let strong = labels.filter { $0.confidence >= categoryFloor }.map(\.identifier)
         var tags = categories(forIdentifiers: strong)
 
-        let hasPeople = hasFaces || labelsIndicatePeople(strong)
+        // People detection is EAGER, and deliberately NOT gated by the strict
+        // floor above. Faces are missed on the 512px analysis image, and a
+        // "crowd"/"person" label is often weak next to a dominant "concert" or
+        // "mountain" — filtering those out (which the strict floor did) is what
+        // left people in Nature. Any people hint above a low floor now vetoes.
+        let peopleLabels = labels.filter { $0.confidence >= peopleFloor }.map(\.identifier)
+        let hasPeople = hasFaces || labelsIndicatePeople(peopleLabels)
         if hasPeople {
             tags.remove(.food)
             tags.remove(.nature)
             tags.remove(.documents)
         }
+
+        // A prominent vehicle is a subject, not scenery.
+        if labelsIndicateVehicle(strong) {
+            tags.remove(.nature)
+        }
+
         if tags.contains(.nature) {
             tags.remove(.documents)
         }

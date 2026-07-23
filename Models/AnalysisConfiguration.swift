@@ -205,6 +205,15 @@ struct AnalysisConfiguration: Sendable, Equatable {
     /// itself weak can't let an even weaker one through on the ratio alone.
     var categoryConfidenceAbsoluteFloor: Float = 0.3
 
+    /// The confidence a "people" label needs to veto Food/Nature.
+    ///
+    /// Deliberately low and NOT the relative floor above. Removing people from
+    /// scenery matters more to the user than the rare over-veto, and people
+    /// labels are often weak next to a dominant scene label ("concert",
+    /// "mountain") — so judging them strictly is what left crowds in Nature.
+    /// 0.25 catches real people (usually 0.3+) while ignoring a stray 0.2.
+    var peopleVetoMinConfidence: Float = 0.25
+
 
     static let `default` = AnalysisConfiguration()
 }
